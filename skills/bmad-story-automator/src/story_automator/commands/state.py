@@ -6,11 +6,18 @@ from pathlib import Path
 from typing import Any
 
 from ..core.frontmatter import extract_frontmatter, parse_simple_frontmatter
+from ..core.runtime_layout import resolve_skill_dir
 from ..core.runtime_policy import PolicyError, load_policy_for_state, snapshot_effective_policy
 from ..core.utils import count_matches, ensure_dir, file_exists, get_project_root, now_utc, now_utc_z, read_text, write_json
 
 
 STANDARD_SEQUENCE = ["create", "dev", "auto", "review", "retro"]
+TEA_REQUIRED_SKILLS = (
+    "bmad-tea-testarch-atdd",
+    "bmad-tea-testarch-automate",
+    "bmad-tea-testarch-test-review",
+    "bmad-tea-testarch-trace",
+)
 
 STEP_DISPLAY_NAMES = {
     "create": "create-story",
@@ -427,6 +434,133 @@ def cmd_build_run_policy(args: list[str]) -> int:
         return 1
     selection = _build_run_policy(Path(get_project_root()), config)
     write_json({"ok": True, **selection})
+    return 0
+
+
+def _has_explicit_tea_policy(project_root: Path) -> bool:
+    override_path = project_root / "_bmad" / "bmm" / "story-automator.policy.json"
+    if not override_path.is_file():
+        return False
+    try:
+        payload = json.loads(read_text(override_path))
+    except (OSError, json.JSONDecodeError):
+        return False
+    sequence = ((payload.get("workflow") or {}).get("sequence")) or []
+    return any(step in {"atdd", "test_automate", "test_review", "trace", "nfr"} for step in sequence if isinstance(step, str))
+
+
+def _tea_detection_assets_root(project_root: Path) -> str:
+    wrapper_assets = project_root / "docs" / "plans" / "tea-story-automator" / "assets"
+    if wrapper_assets.is_dir():
+        return "docs/plans/tea-story-automator/assets"
+    project_assets = project_root / "_bmad" / "tea" / "story-automator"
+    if project_assets.is_dir():
+        return "_bmad/tea/story-automator"
+    return ""
+
+
+def _tea_assets_complete(project_root: Path, assets_root: str) -> tuple[bool, list[str]]:
+    if not assets_root:
+        return False, ["missing TEA story-automator assets root"]
+    prompt_dir = project_root / assets_root / "prompts"
+    parse_dir = project_root / assets_root / "parse"
+    required = [
+        prompt_dir / "atdd.md",
+        prompt_dir / "test_automate.md",
+        prompt_dir / "test_review.md",
+        prompt_dir / "trace.md",
+        parse_dir / "atdd.json",
+        parse_dir / "test_automate.json",
+        parse_dir / "test_review.json",
+        parse_dir / "trace.json",
+    ]
+    missing = [str(path.relative_to(project_root)) for path in required if not path.is_file()]
+    return not missing, missing
+
+
+def _tea_project_signals(project_root: Path) -> list[str]:
+    signals: list[str] = []
+    checks = {
+        "_bmad/tea/config.yaml": project_root / "_bmad" / "tea" / "config.yaml",
+        "_bmad/tea/module-help.csv": project_root / "_bmad" / "tea" / "module-help.csv",
+        "_bmad/tea/workflows/testarch": project_root / "_bmad" / "tea" / "workflows" / "testarch",
+        "_bmad/tea/story-automator": project_root / "_bmad" / "tea" / "story-automator",
+    }
+    for label, path in checks.items():
+        if path.exists():
+            signals.append(label)
+    return signals
+
+
+def _tea_skill_availability(project_root: Path) -> tuple[list[str], list[str]]:
+    available: list[str] = []
+    missing: list[str] = []
+    for skill_name in TEA_REQUIRED_SKILLS:
+        try:
+            skill_dir = resolve_skill_dir(project_root, skill_name)
+        except ValueError:
+            missing.append(skill_name)
+            continue
+        if file_exists(str(skill_dir / "SKILL.md")):
+            available.append(skill_name)
+        else:
+            missing.append(skill_name)
+    return available, missing
+
+
+def _detect_workflow_track(project_root: Path) -> dict[str, Any]:
+    signals = _tea_project_signals(project_root)
+    explicit_policy = _has_explicit_tea_policy(project_root)
+    assets_root = _tea_detection_assets_root(project_root)
+    assets_ok, missing_assets = _tea_assets_complete(project_root, assets_root)
+    available_skills, missing_skills = _tea_skill_availability(project_root)
+    reasons: list[str] = []
+    prompt = ""
+    recommended_track = "standard"
+    requires_confirmation = False
+    tea_capable = bool(signals) and assets_ok and not missing_skills
+
+    if explicit_policy:
+        recommended_track = "tea"
+        reasons.append("Project already defines an explicit TEA story-automator policy override.")
+    elif tea_capable:
+        recommended_track = "tea"
+        requires_confirmation = True
+        reasons.append("Detected TEA module files in the project.")
+        reasons.append("Required TEA skills are installed.")
+        reasons.append("TEA story-automator assets are available.")
+        prompt = "Detected TEA support for this project. Enable TEA automation for this run? [y/N]"
+    else:
+        if signals:
+            reasons.append("Detected TEA-related project files.")
+        if missing_skills:
+            reasons.append("Required TEA skills are missing, so TEA automation is not currently available.")
+        if missing_assets:
+            reasons.append("TEA story-automator assets are incomplete or missing.")
+
+    return {
+        "ok": True,
+        "recommendedTrack": recommended_track,
+        "requiresConfirmation": requires_confirmation,
+        "prompt": prompt,
+        "teaDetected": explicit_policy or bool(signals),
+        "teaCapable": explicit_policy or tea_capable,
+        "explicitTeaPolicy": explicit_policy,
+        "signals": signals,
+        "availableSkills": available_skills,
+        "missingSkills": missing_skills,
+        "assetsRoot": assets_root,
+        "missingAssets": missing_assets,
+        "reasons": reasons,
+    }
+
+
+def cmd_detect_workflow_track(args: list[str]) -> int:
+    project_root = Path(get_project_root())
+    for idx, arg in enumerate(args):
+        if arg == "--project-root" and idx + 1 < len(args):
+            project_root = Path(args[idx + 1]).expanduser().resolve()
+    write_json(_detect_workflow_track(project_root))
     return 0
 
 

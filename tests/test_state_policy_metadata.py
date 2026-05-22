@@ -10,7 +10,7 @@ from pathlib import Path
 
 from story_automator.commands.orchestrator_epic_agents import parse_agent_config
 from story_automator.commands.orchestrator import cmd_orchestrator_helper
-from story_automator.commands.state import cmd_build_run_policy, cmd_build_state_doc, cmd_validate_state
+from story_automator.commands.state import cmd_build_run_policy, cmd_build_state_doc, cmd_detect_workflow_track, cmd_validate_state
 from story_automator.commands.tmux import _build_cmd, cmd_tmux_wrapper
 
 
@@ -506,6 +506,51 @@ class StatePolicyMetadataTests(unittest.TestCase):
         self.assertTrue(any("superseded by TEA test_automate" in note for note in payload["notes"]))
         self.assertTrue(any("not yet automated by story-automator" in note for note in payload["notes"]))
         self.assertTrue(any("out of scope for story-automator" in note for note in payload["notes"]))
+
+    def test_detect_workflow_track_recommends_tea_when_project_is_capable(self) -> None:
+        self._install_tea_skills()
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_detect_workflow_track([])
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["recommendedTrack"], "tea")
+        self.assertTrue(payload["requiresConfirmation"])
+        self.assertTrue(payload["teaCapable"])
+        self.assertIn("Detected TEA support for this project", payload["prompt"])
+
+    def test_detect_workflow_track_stays_standard_when_skills_are_missing(self) -> None:
+        _write_tea_assets(self.project_root)
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_detect_workflow_track([])
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["recommendedTrack"], "standard")
+        self.assertFalse(payload["teaCapable"])
+        self.assertTrue(payload["missingSkills"])
+
+    def test_detect_workflow_track_honors_explicit_tea_policy(self) -> None:
+        self._install_tea_skills()
+        override_dir = self.project_root / "_bmad" / "bmm"
+        override_dir.mkdir(parents=True, exist_ok=True)
+        (override_dir / "story-automator.policy.json").write_text(
+            json.dumps(
+                {
+                    "workflow": {"sequence": ["create", "atdd", "dev", "test_automate", "test_review", "trace", "review"]},
+                    "steps": _tea_steps_override(self.project_root),
+                }
+            ),
+            encoding="utf-8",
+        )
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_detect_workflow_track([])
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["recommendedTrack"], "tea")
+        self.assertFalse(payload["requiresConfirmation"])
+        self.assertTrue(payload["explicitTeaPolicy"])
 
     def test_build_state_doc_snapshots_generated_tea_policy_and_renders_nfr_column(self) -> None:
         self._install_tea_skills(include_nfr=True)

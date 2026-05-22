@@ -42,7 +42,35 @@ Enter choices (e.g., `N 1` or `Y 3`):
 
 Store responses as `skip_automate` (true/false) and `max_parallel` (integer).
 
-### 1b. Configure TEA Options (Only When Explicitly Enabling TEA)
+### 1b. Detect TEA Support (Optional)
+
+Run TEA detection before offering any TEA-specific configuration:
+
+```bash
+tea_detect=$("{buildStateDoc}" detect-workflow-track)
+tea_recommended=$(echo "$tea_detect" | jq -r '.recommendedTrack')
+tea_prompt=$(echo "$tea_detect" | jq -r '.prompt')
+tea_capable=$(echo "$tea_detect" | jq -r '.teaCapable')
+```
+
+If the current runtime is not a POSIX shell, translate this command and JSON parsing flow to the native shell or scripting environment in use (for example PowerShell on Windows) while preserving the same logic.
+
+If `tea_recommended == "tea"` and `tea_capable == "true"`:
+
+```text
+Detected TEA support for this project. Enable TEA automation for this run? [y/N]
+```
+
+**Wait.**
+
+- If `y`: set `workflow_track=tea`
+- Otherwise: set `workflow_track=standard`
+
+If TEA is not recommended or not capable:
+- set `workflow_track=standard`
+- if `tea_detect.reasons` contains missing-skill or missing-asset warnings, display them once and continue in standard mode
+
+### 1c. Configure TEA Options (Only When Explicitly Enabling TEA)
 
 Only if the user explicitly chooses the TEA track for this run, collect TEA-specific choices separately. Do not change the standard-path interaction contract above.
 

@@ -13,7 +13,7 @@ from .commands.basic import (
     cmd_stop_hook,
 )
 from .commands.orchestrator import cmd_orchestrator_helper
-from .commands.state import cmd_build_run_policy, cmd_build_state_doc, cmd_sprint_compare, cmd_state_metrics, cmd_validate_state
+from .commands.state import cmd_build_run_policy, cmd_build_state_doc, cmd_detect_workflow_track, cmd_sprint_compare, cmd_state_metrics, cmd_validate_state
 from .commands.tmux import cmd_codex_status_check, cmd_heartbeat_check, cmd_monitor_session, cmd_tmux_status_check, cmd_tmux_wrapper
 from .commands.validate_story_creation import cmd_validate_story_creation
 from .core.common import help_flag, print_json
@@ -40,6 +40,7 @@ def main(argv: list[str] | None = None) -> int:
         "stop-hook": cmd_stop_hook,
         "build-state-doc": cmd_build_state_doc,
         "build-run-policy": cmd_build_run_policy,
+        "detect-workflow-track": cmd_detect_workflow_track,
         "commit-story": cmd_commit_story,
         "parse-epic": _cmd_parse_epic,
         "parse-story": _cmd_parse_story,
@@ -77,6 +78,7 @@ def _usage(stream: object) -> None:
         "stop-hook",
         "build-state-doc",
         "build-run-policy",
+        "detect-workflow-track",
         "commit-story",
         "parse-epic",
         "parse-story",
