@@ -25,22 +25,44 @@ agentConfigPresets: '../data/agent-config-presets.json'
 
 ## Do
 
-### 1. Configure Execution Preferences
+### 1. Configure Workflow Track and Execution Preferences
 
 > **PREREQUISITE:** Step 2 (preflight) MUST be complete. The Complexity Matrix MUST have been displayed. If not, STOP and complete step 2 first.
 
 ```
-**Execution Settings:**
+**Workflow + Execution Settings:**
 
-1. **Skip the 'automate' step (test automation)?** [N]o (default) / [Y]es
-2. **Max parallel sessions?** (tmux sessions running concurrently, default: 1)
-
-Enter choices (e.g., `N 1` or `Y 3`):
+1. **Workflow track?** [S]tandard (default) / [T]EA
+2. **Skip the standard 'automate' step?** [N]o (default) / [Y]es
+   - Standard track only. Ignored on TEA track.
+3. **Max parallel sessions?** (tmux sessions running concurrently, default: 1)
 ```
 
 **Wait.**
 
-Store responses as `skip_automate` (true/false) and `max_parallel` (integer).
+Store responses as:
+- `workflow_track` = `standard` or `tea`
+- `skip_automate` = true/false
+- `max_parallel` = integer
+
+### 1b. Configure Optional Steps
+
+If `workflow_track == standard`, offer:
+- `retro` (optional epic-level retrospective)
+- `checkpoint-preview` (optional manual checkpoint before commit)
+- `validate-create-story` (optional advisory only; not automated in v1)
+
+If `workflow_track == tea`, state clearly:
+- **Mandatory automated TEA core:** `atdd`, `test_automate`, `test_review`, `trace`
+- **Optional automated TEA add-on:** `nfr`
+- **Optional epic-level add-on:** `retro`
+- **Optional manual checkpoint:** `checkpoint-preview`
+- `validate-create-story` remains advisory only and is not automated in v1
+- legacy `qa-generate-e2e-tests` is not added on the TEA track because `test_automate` supersedes it
+
+Collect:
+- `selected_optional_steps` = zero or more of `retro`, `nfr`, `validate-create-story`
+- `manual_checkpoints` = zero or more of `checkpoint-preview`
 
 ### 2. Configure Agent (Complexity-Aware)
 
@@ -99,7 +121,10 @@ Only when user chose **[U]niform** or **[C]ustom**, follow the Save Configuratio
 
 Display configuration summary:
 - Epic and story range
+- Workflow track
 - Custom instructions (if any)
+- Selected optional automated steps
+- Selected manual checkpoints
 - Agent configuration
 - Execution settings
 
@@ -140,9 +165,12 @@ config_json=$(jq -n \
   --arg currentStep "preflight" \
   --arg aiCommand "$agent_cmd" \
   --arg customInstructions "$custom_instructions" \
+  --arg workflowTrack "$workflow_track" \
+  --argjson selectedOptionalSteps "$selected_optional_steps" \
+  --argjson manualCheckpoints "$manual_checkpoints" \
   --argjson overrides "{\"skipAutomate\":$skip_automate,\"maxParallel\":$max_parallel}" \
   --argjson agentConfig "$agent_config_json" \
-  '{epic:$epic,epicName:$epicName,storyRange:$storyRange,status:$status,currentStory:null,currentStep:$currentStep,aiCommand:$aiCommand,customInstructions:$customInstructions,overrides:$overrides,agentConfig:$agentConfig}'
+  '{epic:$epic,epicName:$epicName,storyRange:$storyRange,status:$status,currentStory:null,currentStep:$currentStep,aiCommand:$aiCommand,customInstructions:$customInstructions,workflowTrack:$workflowTrack,selectedOptionalSteps:$selectedOptionalSteps,manualCheckpoints:$manualCheckpoints,overrides:$overrides,agentConfig:$agentConfig}'
 )
 
 state_result=$("{buildStateDoc}" build-state-doc --template "{stateTemplate}" --output-folder "{outputFolder}" --config-json "$config_json")

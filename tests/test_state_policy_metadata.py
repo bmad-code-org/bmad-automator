@@ -10,7 +10,7 @@ from pathlib import Path
 
 from story_automator.commands.orchestrator_epic_agents import parse_agent_config
 from story_automator.commands.orchestrator import cmd_orchestrator_helper
-from story_automator.commands.state import cmd_build_state_doc, cmd_validate_state
+from story_automator.commands.state import cmd_build_run_policy, cmd_build_state_doc, cmd_validate_state
 from story_automator.commands.tmux import _build_cmd, cmd_tmux_wrapper
 
 
@@ -479,6 +479,48 @@ class StatePolicyMetadataTests(unittest.TestCase):
         self.assertIn("| Story | create-story | atdd | dev-story | test-automate | test-review | trace | code-review | git-commit | Status |", text)
         self.assertIn("| 1.1 | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | pending |", text)
 
+    def test_build_run_policy_generates_tea_sequence_with_optional_nfr_and_manual_checkpoint(self) -> None:
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_build_run_policy(
+                [
+                    "--config-json",
+                    json.dumps(
+                        {
+                            "workflowTrack": "tea",
+                            "selectedOptionalSteps": ["nfr", "retro", "qa-generate-e2e-tests", "validate-create-story"],
+                            "manualCheckpoints": ["checkpoint-preview"],
+                        }
+                    ),
+                ]
+            )
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertTrue(payload["ok"])
+        self.assertEqual(
+            payload["policyOverride"]["workflow"]["sequence"],
+            ["create", "atdd", "dev", "test_automate", "test_review", "nfr", "trace", "review", "retro"],
+        )
+        self.assertEqual(payload["manualCheckpoints"], ["checkpoint-preview"])
+        self.assertEqual(payload["selectedOptionalSteps"], ["nfr", "retro"])
+        self.assertTrue(any("superseded by TEA test_automate" in note for note in payload["notes"]))
+        self.assertTrue(any("not yet automated by story-automator" in note for note in payload["notes"]))
+
+    def test_build_state_doc_snapshots_generated_tea_policy_and_renders_nfr_column(self) -> None:
+        self._install_tea_skills(include_nfr=True)
+        state_file = self._build_state(
+            {
+                "workflowTrack": "tea",
+                "selectedOptionalSteps": ["nfr"],
+                "manualCheckpoints": ["checkpoint-preview"],
+            }
+        )
+        text = state_file.read_text(encoding="utf-8")
+        self.assertIn('workflowTrack: "tea"', text)
+        self.assertIn('selectedOptionalSteps: ["nfr"]', text)
+        self.assertIn('manualCheckpoints: ["checkpoint-preview"]', text)
+        self.assertIn("| Story | create-story | atdd | dev-story | test-automate | test-review | nfr | trace | code-review | git-commit | Status |", text)
+
     def test_agents_build_uses_pinned_tea_story_sequence(self) -> None:
         self._install_tea_skills()
         override_dir = self.project_root / "_bmad" / "bmm"
@@ -587,14 +629,17 @@ class StatePolicyMetadataTests(unittest.TestCase):
         (self.project_root / ".claude" / "skills" / "bmad-dev-story" / "checklist.md").write_text("# checklist\n", encoding="utf-8")
         (self.project_root / ".claude" / "skills" / "bmad-qa-generate-e2e-tests" / "checklist.md").write_text("# checklist\n", encoding="utf-8")
 
-    def _install_tea_skills(self) -> None:
+    def _install_tea_skills(self, *, include_nfr: bool = False) -> None:
         _write_tea_assets(self.project_root)
-        for name in (
+        names = [
             "bmad-tea-testarch-atdd",
             "bmad-tea-testarch-automate",
             "bmad-tea-testarch-test-review",
             "bmad-tea-testarch-trace",
-        ):
+        ]
+        if include_nfr:
+            names.append("bmad-tea-testarch-nfr")
+        for name in names:
             skill_dir = self.project_root / ".claude" / "skills" / name
             skill_dir.mkdir(parents=True, exist_ok=True)
             (skill_dir / "SKILL.md").write_text(f"# {name}\n", encoding="utf-8")
@@ -634,15 +679,17 @@ def _write_tea_assets(project_root: Path) -> None:
     (prompts / "atdd.md").write_text("ATDD {{story_id}}\n", encoding="utf-8")
     (prompts / "test_automate.md").write_text("TEST AUTOMATE {{story_id}}\n", encoding="utf-8")
     (prompts / "test_review.md").write_text("TEST REVIEW {{story_id}}\n", encoding="utf-8")
+    (prompts / "nfr.md").write_text("NFR {{story_id}}\n", encoding="utf-8")
     (prompts / "trace.md").write_text("TRACE {{story_id}}\n", encoding="utf-8")
     (parse / "atdd.json").write_text(json.dumps({"requiredKeys": ["status", "failing_tests_created", "summary", "next_action"], "schema": {"status": "SUCCESS|FAILURE|AMBIGUOUS", "failing_tests_created": "true|false", "summary": "brief description", "next_action": "proceed|retry|escalate"}}), encoding="utf-8")
     (parse / "test_automate.json").write_text(json.dumps({"requiredKeys": ["status", "tests_added", "summary", "next_action"], "schema": {"status": "SUCCESS|FAILURE|AMBIGUOUS", "tests_added": "integer", "summary": "brief description", "next_action": "proceed|retry|escalate"}}), encoding="utf-8")
     (parse / "test_review.json").write_text(json.dumps({"requiredKeys": ["status", "issues_found", "summary", "next_action"], "schema": {"status": "SUCCESS|FAILURE|AMBIGUOUS", "issues_found": "integer", "summary": "brief description", "next_action": "proceed|retry|escalate"}}), encoding="utf-8")
+    (parse / "nfr.json").write_text(json.dumps({"requiredKeys": ["status", "nfr_report_created", "summary", "next_action"], "schema": {"status": "SUCCESS|FAILURE|AMBIGUOUS", "nfr_report_created": "true|false", "summary": "brief description", "next_action": "proceed|retry|escalate"}}), encoding="utf-8")
     (parse / "trace.json").write_text(json.dumps({"requiredKeys": ["status", "trace_updated", "summary", "next_action"], "schema": {"status": "SUCCESS|FAILURE|AMBIGUOUS", "trace_updated": "true|false", "summary": "brief description", "next_action": "proceed|retry|escalate"}}), encoding="utf-8")
 
 
-def _tea_steps_override(project_root: Path) -> dict[str, object]:
-    return {
+def _tea_steps_override(project_root: Path, *, include_nfr: bool = False) -> dict[str, object]:
+    steps: dict[str, object] = {
         "atdd": {
             "label": "atdd",
             "assets": {
@@ -700,6 +747,22 @@ def _tea_steps_override(project_root: Path) -> dict[str, object]:
             "success": {"verifier": "session_exit"},
         },
     }
+    if include_nfr:
+        steps["nfr"] = {
+            "label": "nfr",
+            "assets": {
+                "skillName": "bmad-tea-testarch-nfr",
+                "workflowCandidates": ["workflow.md", "workflow.yaml"],
+                "instructionsCandidates": [],
+                "checklistCandidates": ["checklist.md"],
+                "templateCandidates": [],
+                "required": ["skill"],
+            },
+            "prompt": {"templateFile": "_bmad/tea/story-automator/prompts/nfr.md", "interactionMode": "autonomous"},
+            "parse": {"schemaFile": "_bmad/tea/story-automator/parse/nfr.json"},
+            "success": {"verifier": "session_exit"},
+        }
+    return steps
 
 
 if __name__ == "__main__":

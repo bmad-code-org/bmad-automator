@@ -45,6 +45,15 @@ class RuntimePolicyTests(unittest.TestCase):
         self.assertEqual(policy["workflow"]["sequence"], ["create", "review"])
         self.assertEqual(policy["steps"]["review"]["prompt"]["defaultExtraInstruction"], "fix critical issues only")
 
+    def test_inline_override_deep_merges_after_project_override(self) -> None:
+        self._write_override({"workflow": {"sequence": ["create", "dev", "review"]}})
+        policy = load_effective_policy(
+            str(self.project_root),
+            inline_override={"workflow": {"repeat": {"review": {"maxCycles": 3}}}},
+        )
+        self.assertEqual(policy["workflow"]["sequence"], ["create", "dev", "review"])
+        self.assertEqual(policy["workflow"]["repeat"]["review"]["maxCycles"], 3)
+
     def test_invalid_step_name_rejected(self) -> None:
         self._write_override({"steps": {"ship": {"success": {"verifier": "session_exit"}}}})
         with self.assertRaises(PolicyError):
@@ -344,15 +353,17 @@ def _write_tea_assets(project_root: Path) -> None:
     (prompts / "atdd.md").write_text("ATDD {{story_id}}\n", encoding="utf-8")
     (prompts / "test_automate.md").write_text("TEST AUTOMATE {{story_id}}\n", encoding="utf-8")
     (prompts / "test_review.md").write_text("TEST REVIEW {{story_id}}\n", encoding="utf-8")
+    (prompts / "nfr.md").write_text("NFR {{story_id}}\n", encoding="utf-8")
     (prompts / "trace.md").write_text("TRACE {{story_id}}\n", encoding="utf-8")
     (parse / "atdd.json").write_text(json.dumps({"requiredKeys": ["status", "failing_tests_created", "summary", "next_action"], "schema": {"status": "SUCCESS|FAILURE|AMBIGUOUS", "failing_tests_created": "true|false", "summary": "brief description", "next_action": "proceed|retry|escalate"}}), encoding="utf-8")
     (parse / "test_automate.json").write_text(json.dumps({"requiredKeys": ["status", "tests_added", "summary", "next_action"], "schema": {"status": "SUCCESS|FAILURE|AMBIGUOUS", "tests_added": "integer", "summary": "brief description", "next_action": "proceed|retry|escalate"}}), encoding="utf-8")
     (parse / "test_review.json").write_text(json.dumps({"requiredKeys": ["status", "issues_found", "summary", "next_action"], "schema": {"status": "SUCCESS|FAILURE|AMBIGUOUS", "issues_found": "integer", "summary": "brief description", "next_action": "proceed|retry|escalate"}}), encoding="utf-8")
+    (parse / "nfr.json").write_text(json.dumps({"requiredKeys": ["status", "nfr_report_created", "summary", "next_action"], "schema": {"status": "SUCCESS|FAILURE|AMBIGUOUS", "nfr_report_created": "true|false", "summary": "brief description", "next_action": "proceed|retry|escalate"}}), encoding="utf-8")
     (parse / "trace.json").write_text(json.dumps({"requiredKeys": ["status", "trace_updated", "summary", "next_action"], "schema": {"status": "SUCCESS|FAILURE|AMBIGUOUS", "trace_updated": "true|false", "summary": "brief description", "next_action": "proceed|retry|escalate"}}), encoding="utf-8")
 
 
-def _tea_steps_override(project_root: Path) -> dict[str, object]:
-    return {
+def _tea_steps_override(project_root: Path, *, include_nfr: bool = False) -> dict[str, object]:
+    steps: dict[str, object] = {
         "atdd": {
             "label": "atdd",
             "assets": {
@@ -410,6 +421,22 @@ def _tea_steps_override(project_root: Path) -> dict[str, object]:
             "success": {"verifier": "session_exit"},
         },
     }
+    if include_nfr:
+        steps["nfr"] = {
+            "label": "nfr",
+            "assets": {
+                "skillName": "bmad-tea-testarch-nfr",
+                "workflowCandidates": ["workflow.md", "workflow.yaml"],
+                "instructionsCandidates": [],
+                "checklistCandidates": ["checklist.md"],
+                "templateCandidates": [],
+                "required": ["skill"],
+            },
+            "prompt": {"templateFile": "_bmad/tea/story-automator/prompts/nfr.md", "interactionMode": "autonomous"},
+            "parse": {"schemaFile": "_bmad/tea/story-automator/parse/nfr.json"},
+            "success": {"verifier": "session_exit"},
+        }
+    return steps
 
 
 if __name__ == "__main__":

@@ -10,6 +10,12 @@ from ..core.runtime_policy import PolicyError, load_policy_for_state, snapshot_e
 from ..core.utils import count_matches, ensure_dir, file_exists, get_project_root, now_utc, now_utc_z, read_text, write_json
 
 
+STANDARD_SEQUENCE = ["create", "dev", "auto", "review", "retro"]
+TEA_CORE_SEQUENCE = ["create", "atdd", "dev", "test_automate", "test_review", "trace", "review"]
+TEA_OPTIONAL_AUTOMATED_STEPS = {"nfr", "retro"}
+MANUAL_CHECKPOINTS = {"checkpoint-preview"}
+UNSUPPORTED_AUTOMATED_OPTIONS = {"validate-create-story"}
+
 STEP_DISPLAY_NAMES = {
     "create": "create-story",
     "dev": "dev-story",
@@ -18,8 +24,199 @@ STEP_DISPLAY_NAMES = {
     "atdd": "atdd",
     "test_automate": "test-automate",
     "test_review": "test-review",
+    "nfr": "nfr",
     "trace": "trace",
 }
+
+
+def _normalize_string_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str) and value.strip():
+        return [part.strip() for part in value.split(",") if part.strip()]
+    return []
+
+
+def _as_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "y", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "n", "off"}:
+            return False
+    return default
+
+
+def _tea_assets_root(project_root: Path, config: dict[str, Any]) -> str:
+    configured = str(config.get("teaAssetsRoot") or "").strip()
+    if configured:
+        return configured.rstrip("/")
+    wrapper_assets = project_root / "docs" / "plans" / "tea-story-automator" / "assets"
+    if wrapper_assets.is_dir():
+        return "docs/plans/tea-story-automator/assets"
+    return "_bmad/tea/story-automator"
+
+
+def _tea_step_contracts(assets_root: str, *, include_nfr: bool) -> dict[str, Any]:
+    root = assets_root.rstrip("/")
+    steps: dict[str, Any] = {
+        "atdd": {
+            "label": "atdd",
+            "assets": {
+                "skillName": "bmad-tea-testarch-atdd",
+                "workflowCandidates": ["workflow.md", "workflow.yaml"],
+                "instructionsCandidates": [],
+                "checklistCandidates": ["checklist.md"],
+                "templateCandidates": [],
+                "required": ["skill"],
+            },
+            "prompt": {"templateFile": f"{root}/prompts/atdd.md", "interactionMode": "autonomous"},
+            "parse": {"schemaFile": f"{root}/parse/atdd.json"},
+            "success": {"verifier": "session_exit"},
+        },
+        "test_automate": {
+            "label": "test-automate",
+            "assets": {
+                "skillName": "bmad-tea-testarch-automate",
+                "workflowCandidates": ["workflow.md", "workflow.yaml"],
+                "instructionsCandidates": [],
+                "checklistCandidates": ["checklist.md"],
+                "templateCandidates": [],
+                "required": ["skill"],
+            },
+            "prompt": {"templateFile": f"{root}/prompts/test_automate.md", "interactionMode": "autonomous"},
+            "parse": {"schemaFile": f"{root}/parse/test_automate.json"},
+            "success": {"verifier": "session_exit"},
+        },
+        "test_review": {
+            "label": "test-review",
+            "assets": {
+                "skillName": "bmad-tea-testarch-test-review",
+                "workflowCandidates": ["workflow.md", "workflow.yaml"],
+                "instructionsCandidates": [],
+                "checklistCandidates": ["checklist.md"],
+                "templateCandidates": [],
+                "required": ["skill"],
+            },
+            "prompt": {"templateFile": f"{root}/prompts/test_review.md", "interactionMode": "autonomous"},
+            "parse": {"schemaFile": f"{root}/parse/test_review.json"},
+            "success": {"verifier": "session_exit"},
+        },
+        "trace": {
+            "label": "trace",
+            "assets": {
+                "skillName": "bmad-tea-testarch-trace",
+                "workflowCandidates": ["workflow.md", "workflow.yaml"],
+                "instructionsCandidates": [],
+                "checklistCandidates": ["checklist.md"],
+                "templateCandidates": [],
+                "required": ["skill"],
+            },
+            "prompt": {"templateFile": f"{root}/prompts/trace.md", "interactionMode": "autonomous"},
+            "parse": {"schemaFile": f"{root}/parse/trace.json"},
+            "success": {"verifier": "session_exit"},
+        },
+    }
+    if include_nfr:
+        steps["nfr"] = {
+            "label": "nfr",
+            "assets": {
+                "skillName": "bmad-tea-testarch-nfr",
+                "workflowCandidates": ["workflow.md", "workflow.yaml"],
+                "instructionsCandidates": [],
+                "checklistCandidates": ["checklist.md"],
+                "templateCandidates": [],
+                "required": ["skill"],
+            },
+            "prompt": {"templateFile": f"{root}/prompts/nfr.md", "interactionMode": "autonomous"},
+            "parse": {"schemaFile": f"{root}/parse/nfr.json"},
+            "success": {"verifier": "session_exit"},
+        }
+    return steps
+
+
+def _build_run_policy(project_root: Path, config: dict[str, Any]) -> dict[str, Any]:
+    explicit_override = config.get("policyOverride")
+    if isinstance(explicit_override, dict):
+        return {
+            "policyOverride": explicit_override,
+            "workflowTrack": str(config.get("workflowTrack") or "standard"),
+            "selectedOptionalSteps": _normalize_string_list(config.get("selectedOptionalSteps")),
+            "manualCheckpoints": _normalize_string_list(config.get("manualCheckpoints")),
+            "notes": _normalize_string_list(config.get("policyNotes")),
+        }
+
+    has_run_selection = any(
+        key in config for key in ("workflowTrack", "selectedOptionalSteps", "manualCheckpoints", "teaAssetsRoot", "includeRetro")
+    )
+    if not has_run_selection:
+        return {
+            "policyOverride": {},
+            "workflowTrack": "standard",
+            "selectedOptionalSteps": [],
+            "manualCheckpoints": [],
+            "notes": [],
+        }
+
+    track = str(config.get("workflowTrack") or "standard").strip().lower()
+    if track not in {"standard", "tea"}:
+        track = "standard"
+    selected = set(_normalize_string_list(config.get("selectedOptionalSteps")))
+    manual = set(_normalize_string_list(config.get("manualCheckpoints")))
+    notes: list[str] = []
+    policy_override: dict[str, Any] = {}
+
+    if track == "tea":
+        assets_root = _tea_assets_root(project_root, config)
+        include_nfr = "nfr" in selected
+        include_retro = "retro" in selected
+        for unsupported in sorted(selected & UNSUPPORTED_AUTOMATED_OPTIONS):
+            notes.append(f"{unsupported} is not automated on the TEA track in v1 and was not added to the workflow sequence.")
+        if "qa-generate-e2e-tests" in selected:
+            notes.append("qa-generate-e2e-tests is superseded by TEA test_automate on the TEA track and was ignored.")
+        if "validate-create-story" in selected:
+            notes.append("validate-create-story remains an advisory pre-dev quality check and is not yet automated by story-automator.")
+        sequence = ["create", "atdd", "dev", "test_automate", "test_review"]
+        if include_nfr:
+            sequence.append("nfr")
+        sequence.extend(["trace", "review"])
+        if include_retro:
+            sequence.append("retro")
+        policy_override = {
+            "workflow": {"sequence": sequence},
+            "steps": _tea_step_contracts(assets_root, include_nfr=include_nfr),
+        }
+        selected = {"nfr" if include_nfr else "", "retro" if include_retro else ""}
+        selected.discard("")
+    else:
+        include_retro = "retro" in selected if "retro" in selected else _as_bool(config.get("includeRetro"), True)
+        sequence = ["create", "dev", "auto", "review"]
+        if include_retro:
+            sequence.append("retro")
+            selected.add("retro")
+        else:
+            selected.discard("retro")
+        for unsupported in sorted(selected & {"nfr"}):
+            notes.append("nfr is only available on the TEA track and was ignored for the standard workflow.")
+            selected.discard(unsupported)
+        if "validate-create-story" in selected:
+            notes.append("validate-create-story is not yet an automated story-automator step and was recorded as advisory only.")
+            selected.discard("validate-create-story")
+        if "qa-generate-e2e-tests" in selected:
+            notes.append("qa-generate-e2e-tests is already represented by the standard auto step; use skipAutomate to disable it.")
+            selected.discard("qa-generate-e2e-tests")
+        policy_override = {"workflow": {"sequence": sequence}}
+
+    recognized_manual = sorted(checkpoint for checkpoint in manual if checkpoint in MANUAL_CHECKPOINTS)
+    return {
+        "policyOverride": policy_override,
+        "workflowTrack": track,
+        "selectedOptionalSteps": sorted(selected),
+        "manualCheckpoints": recognized_manual,
+        "notes": notes,
+    }
 
 
 def _story_progress_steps(policy: dict[str, Any]) -> list[str]:
@@ -84,8 +281,9 @@ def cmd_build_state_doc(args: list[str]) -> int:
     epic = str(config.get("epic") or "epic")
     safe_epic = re.sub(r"[^a-zA-Z0-9]+", "-", epic).strip("-") or "epic"
     output_path = Path(output_folder) / f"orchestration-{safe_epic}-{stamp}.md"
+    policy_selection = _build_run_policy(Path(get_project_root()), config)
     try:
-        snapshot = snapshot_effective_policy(get_project_root())
+        snapshot = snapshot_effective_policy(get_project_root(), inline_override=policy_selection["policyOverride"])
     except (FileNotFoundError, PolicyError, ValueError) as exc:
         write_json({"ok": False, "error": "policy_snapshot_failed", "reason": str(exc)})
         return 1
@@ -108,6 +306,10 @@ def cmd_build_state_doc(args: list[str]) -> int:
         "policySnapshotFile": snapshot["policySnapshotFile"],
         "policySnapshotHash": snapshot["policySnapshotHash"],
         "legacyPolicy": False,
+        "workflowTrack": policy_selection["workflowTrack"],
+        "selectedOptionalSteps": policy_selection["selectedOptionalSteps"],
+        "manualCheckpoints": policy_selection["manualCheckpoints"],
+        "policyNotes": policy_selection["notes"],
     }
     overrides = config.get("overrides", {}) if isinstance(config.get("overrides"), dict) else {}
     text = re.sub(
@@ -119,6 +321,26 @@ def cmd_build_state_doc(args: list[str]) -> int:
     )
     custom_instructions = json.dumps(config.get("customInstructions", ""))
     text = re.sub(r"(?m)^customInstructions:.*$", lambda m: f"customInstructions: {custom_instructions}", text)
+    text = re.sub(
+        r"(?m)^workflowTrack:.*$",
+        lambda m: f'workflowTrack: {json.dumps(policy_selection["workflowTrack"])}',
+        text,
+    )
+    text = re.sub(
+        r"(?m)^selectedOptionalSteps:.*$",
+        lambda m: f"selectedOptionalSteps: {json.dumps(policy_selection['selectedOptionalSteps'])}",
+        text,
+    )
+    text = re.sub(
+        r"(?m)^manualCheckpoints:.*$",
+        lambda m: f"manualCheckpoints: {json.dumps(policy_selection['manualCheckpoints'])}",
+        text,
+    )
+    text = re.sub(
+        r"(?m)^policyNotes:.*$",
+        lambda m: f"policyNotes: {json.dumps(policy_selection['notes'])}",
+        text,
+    )
     agent_config = config.get("agentConfig")
     if isinstance(agent_config, dict):
         per_task = agent_config.get("perTask", {})
@@ -184,6 +406,10 @@ def cmd_build_state_doc(args: list[str]) -> int:
         "{{overrides.skipAutomate}}": str(bool(overrides.get("skipAutomate", False))).lower(),
         "{{overrides.maxParallel}}": str(int(overrides.get("maxParallel", 1) or 1)),
         "{{customInstructions}}": str(config.get("customInstructions", "")),
+        "{{workflowTrack}}": str(policy_selection["workflowTrack"]),
+        "{{selectedOptionalSteps}}": ", ".join(policy_selection["selectedOptionalSteps"]) or "none",
+        "{{manualCheckpoints}}": ", ".join(policy_selection["manualCheckpoints"]) or "none",
+        "{{policyNotes}}": "\n".join(f"- {note}" for note in policy_selection["notes"]) or "- none",
     }
     for key, value in body.items():
         text = text.replace(key, value)
@@ -192,6 +418,29 @@ def cmd_build_state_doc(args: list[str]) -> int:
     text = text.replace("<!-- Progress rows will be appended here -->", progress_rows)
     output_path.write_text(text)
     write_json({"ok": True, "path": str(output_path), "createdAt": now})
+    return 0
+
+
+def cmd_build_run_policy(args: list[str]) -> int:
+    config_file = ""
+    config_json = ""
+    for idx, arg in enumerate(args):
+        if arg == "--config-file" and idx + 1 < len(args):
+            config_file = args[idx + 1]
+        elif arg == "--config-json" and idx + 1 < len(args):
+            config_json = args[idx + 1]
+    if config_file and file_exists(config_file):
+        config_json = read_text(config_file)
+    if not config_json.strip():
+        write_json({"ok": False, "error": "missing_config"})
+        return 1
+    try:
+        config = json.loads(config_json)
+    except json.JSONDecodeError:
+        write_json({"ok": False, "error": "missing_config"})
+        return 1
+    selection = _build_run_policy(Path(get_project_root()), config)
+    write_json({"ok": True, **selection})
     return 0
 
 

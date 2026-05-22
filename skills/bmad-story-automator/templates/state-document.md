@@ -16,6 +16,10 @@ overrides:
   skipAutomate: false
   maxParallel: 1
 customInstructions: ""  # User-provided instructions for orchestration
+workflowTrack: "standard"
+selectedOptionalSteps: []
+manualCheckpoints: []
+policyNotes: []
 agentsFile: ""  # Deterministic per-story agent selections
 complexityFile: ""  # Persisted story complexity data
 policyVersion: 0
@@ -76,6 +80,12 @@ completedSessions: []
 **Overrides:**
 - Skip Automate: {{overrides.skipAutomate}}
 - Max Parallel: {{overrides.maxParallel}}
+- Workflow Track: {{workflowTrack}}
+- Optional Steps: {{selectedOptionalSteps}}
+- Manual Checkpoints: {{manualCheckpoints}}
+
+**Policy Notes:**
+{{policyNotes}}
 
 **Custom Instructions:**
 {{customInstructions}}

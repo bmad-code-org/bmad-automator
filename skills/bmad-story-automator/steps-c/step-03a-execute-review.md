@@ -31,11 +31,11 @@ Set: `scripts="{scriptsDir}"`
 The pinned workflow policy snapshot decides which pre-review quality steps apply.
 
 - Standard default path: optional `auto`, then `review`
-- TEA v1 opt-in path: `test_automate`, `test_review`, `trace`, then `review`
+- TEA v1 opt-in path: `test_automate`, `test_review`, optional `nfr`, `trace`, then `review`
 
 For TEA v1:
 
-- `test_automate`, `test_review`, and `trace` use the same spawn/monitor/parse pattern as other session-exit steps
+- `test_automate`, `test_review`, optional `nfr`, and `trace` use the same spawn/monitor/parse pattern as other session-exit steps
 - successful completion means execution completed, not artifact verification
 - use the current per-task agent selection from the agents file
 - when updating progress, do not assume the standard fixed column order if TEA mode is active
@@ -73,7 +73,7 @@ result=$("$scripts" monitor-session "$session" --json --agent "$current_agent")
 
 ### C.1 TEA Quality Steps
 
-*Run only if the pinned policy sequence includes any of: `test_automate`, `test_review`, `trace`*
+*Run only if the pinned policy sequence includes any of: `test_automate`, `test_review`, `nfr`, `trace`*
 
 For each enabled TEA step:
 

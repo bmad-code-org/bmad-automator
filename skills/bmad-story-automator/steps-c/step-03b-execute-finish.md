@@ -15,6 +15,15 @@ outputFile: '{output_folder}/story-automator/orchestration-{epic_id}-{timestamp}
 
 ## Story Loop (Continue from Step 3)
 
+### D. Optional Manual Checkpoint
+
+If the state frontmatter `manualCheckpoints` includes `checkpoint-preview`, pause here before the git commit step.
+
+- Display that a manual checkpoint is required for this story.
+- Instruct the user to run `bmad-checkpoint-preview` against the current change set.
+- Wait for explicit confirmation before proceeding.
+- Do not treat `checkpoint-preview` as an autonomous step or as part of the pinned workflow sequence.
+
 ### E. Git Commit
 
 **Required:** Commit after every story (do not skip).

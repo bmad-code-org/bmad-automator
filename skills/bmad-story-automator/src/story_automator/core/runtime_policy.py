@@ -10,7 +10,7 @@ from .runtime_layout import active_marker_path, bundled_story_skill_root, resolv
 from .utils import ensure_dir, get_project_root, iso_now, md5_hex8, read_text, write_atomic
 
 VALID_TOP_LEVEL_KEYS = {"version", "snapshot", "runtime", "workflow", "steps"}
-VALID_STEP_NAMES = {"create", "dev", "auto", "review", "retro", "atdd", "test_automate", "test_review", "trace"}
+VALID_STEP_NAMES = {"create", "dev", "auto", "review", "retro", "atdd", "test_automate", "test_review", "trace", "nfr"}
 VALID_VERIFIERS = {"create_story_artifact", "session_exit", "review_completion", "epic_complete"}
 VALID_ASSET_NAMES = {"skill", "workflow", "instructions", "checklist", "template"}
 VALID_PARSER_PROVIDERS = {"claude"}
@@ -32,12 +32,17 @@ class PolicyError(ValueError):
     pass
 
 
-def load_effective_policy(project_root: str | None = None, *, resolve_assets: bool = True) -> dict[str, Any]:
+def load_effective_policy(
+    project_root: str | None = None,
+    *,
+    resolve_assets: bool = True,
+    inline_override: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     root = Path(project_root or get_project_root()).resolve()
     bundled = load_bundled_policy(str(root), resolve_assets=False)
     override_path = root / "_bmad" / "bmm" / "story-automator.policy.json"
     override = _read_json(override_path) if override_path.is_file() else {}
-    policy = _deep_merge(bundled, override)
+    policy = _deep_merge(_deep_merge(bundled, override), inline_override or {})
     _apply_legacy_env(policy)
     _validate_policy_shape(policy)
     _clear_resolved_fields(policy)
@@ -66,9 +71,9 @@ def load_runtime_policy(
     return load_effective_policy(str(root), resolve_assets=resolve_assets)
 
 
-def snapshot_effective_policy(project_root: str | None = None) -> dict[str, Any]:
+def snapshot_effective_policy(project_root: str | None = None, *, inline_override: dict[str, Any] | None = None) -> dict[str, Any]:
     root = Path(project_root or get_project_root()).resolve()
-    policy = load_effective_policy(str(root))
+    policy = load_effective_policy(str(root), inline_override=inline_override)
     snapshot_dir = _resolve_snapshot_dir(policy, root)
     ensure_dir(snapshot_dir)
     stable_json = _stable_policy_json(policy)
