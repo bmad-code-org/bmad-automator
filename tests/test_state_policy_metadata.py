@@ -501,10 +501,11 @@ class StatePolicyMetadataTests(unittest.TestCase):
             payload["policyOverride"]["workflow"]["sequence"],
             ["create", "atdd", "dev", "test_automate", "test_review", "nfr", "trace", "review", "retro"],
         )
-        self.assertEqual(payload["manualCheckpoints"], ["checkpoint-preview"])
+        self.assertEqual(payload["manualCheckpoints"], [])
         self.assertEqual(payload["selectedOptionalSteps"], ["nfr", "retro"])
         self.assertTrue(any("superseded by TEA test_automate" in note for note in payload["notes"]))
         self.assertTrue(any("not yet automated by story-automator" in note for note in payload["notes"]))
+        self.assertTrue(any("out of scope for story-automator" in note for note in payload["notes"]))
 
     def test_build_state_doc_snapshots_generated_tea_policy_and_renders_nfr_column(self) -> None:
         self._install_tea_skills(include_nfr=True)
@@ -518,8 +519,18 @@ class StatePolicyMetadataTests(unittest.TestCase):
         text = state_file.read_text(encoding="utf-8")
         self.assertIn('workflowTrack: "tea"', text)
         self.assertIn('selectedOptionalSteps: ["nfr"]', text)
-        self.assertIn('manualCheckpoints: ["checkpoint-preview"]', text)
+        self.assertIn('manualCheckpoints: []', text)
+        self.assertIn("**TEA Configuration:**", text)
+        self.assertIn("- Mandatory TEA Core: atdd, test_automate, test_review, trace", text)
         self.assertIn("| Story | create-story | atdd | dev-story | test-automate | test-review | nfr | trace | code-review | git-commit | Status |", text)
+
+    def test_build_state_doc_keeps_standard_summary_shape_unchanged(self) -> None:
+        state_file = self._build_state()
+        text = state_file.read_text(encoding="utf-8")
+        self.assertNotIn("**TEA Configuration:**", text)
+        self.assertNotIn("Workflow Track:", text)
+        self.assertNotIn("Optional Steps:", text)
+        self.assertNotIn("Manual Checkpoints:", text)
 
     def test_agents_build_uses_pinned_tea_story_sequence(self) -> None:
         self._install_tea_skills()

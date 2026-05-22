@@ -11,10 +11,6 @@ from ..core.utils import count_matches, ensure_dir, file_exists, get_project_roo
 
 
 STANDARD_SEQUENCE = ["create", "dev", "auto", "review", "retro"]
-TEA_CORE_SEQUENCE = ["create", "atdd", "dev", "test_automate", "test_review", "trace", "review"]
-TEA_OPTIONAL_AUTOMATED_STEPS = {"nfr", "retro"}
-MANUAL_CHECKPOINTS = {"checkpoint-preview"}
-UNSUPPORTED_AUTOMATED_OPTIONS = {"validate-create-story"}
 
 STEP_DISPLAY_NAMES = {
     "create": "create-story",
@@ -27,6 +23,199 @@ STEP_DISPLAY_NAMES = {
     "nfr": "nfr",
     "trace": "trace",
 }
+
+
+def _story_progress_steps(policy: dict[str, Any]) -> list[str]:
+    sequence = ((policy.get("workflow") or {}).get("sequence")) or []
+    return [str(step) for step in sequence if isinstance(step, str) and step and step != "retro"]
+
+
+def _progress_headers(steps: list[str]) -> list[str]:
+    headers = ["Story"]
+    headers.extend(STEP_DISPLAY_NAMES.get(step, step.replace("_", "-")) for step in steps)
+    headers.extend(["git-commit", "Status"])
+    return headers
+
+
+def _markdown_divider(width: int) -> list[str]:
+    return ["-------" if idx == 0 else "----------" for idx in range(width)]
+
+
+def _progress_table_lines(policy: dict[str, Any], story_range: list[str]) -> tuple[str, str, str]:
+    steps = _story_progress_steps(policy)
+    headers = _progress_headers(steps)
+    divider = _markdown_divider(len(headers))
+    pending_cells = ["⏳"] * len(steps) + ["⏳", "pending"]
+    rows = "\n".join("| " + " | ".join([story_id, *pending_cells]) + " |" for story_id in story_range)
+    return (
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join(divider) + " |",
+        rows,
+    )
+
+
+def cmd_build_state_doc(args: list[str]) -> int:
+    template = ""
+    output_folder = ""
+    config_file = ""
+    config_json = ""
+    for idx, arg in enumerate(args):
+        if arg == "--template" and idx + 1 < len(args):
+            template = args[idx + 1]
+        elif arg == "--output-folder" and idx + 1 < len(args):
+            output_folder = args[idx + 1]
+        elif arg == "--config-file" and idx + 1 < len(args):
+            config_file = args[idx + 1]
+        elif arg == "--config-json" and idx + 1 < len(args):
+            config_json = args[idx + 1]
+    if not template or not file_exists(template) or not output_folder:
+        write_json({"ok": False, "error": "missing_template_or_output"})
+        return 1
+    if config_file and file_exists(config_file):
+        config_json = read_text(config_file)
+    if not config_json.strip():
+        write_json({"ok": False, "error": "missing_config"})
+        return 1
+    try:
+        config = json.loads(config_json)
+    except json.JSONDecodeError:
+        write_json({"ok": False, "error": "missing_config"})
+        return 1
+    ensure_dir(output_folder)
+    now = now_utc_z()
+    stamp = now_utc().strftime("%Y%m%d-%H%M%S")
+    epic = str(config.get("epic") or "epic")
+    safe_epic = re.sub(r"[^a-zA-Z0-9]+", "-", epic).strip("-") or "epic"
+    output_path = Path(output_folder) / f"orchestration-{safe_epic}-{stamp}.md"
+    policy_selection = _build_run_policy(Path(get_project_root()), config)
+    try:
+        snapshot = snapshot_effective_policy(get_project_root(), inline_override=policy_selection["policyOverride"])
+    except (FileNotFoundError, PolicyError, ValueError) as exc:
+        write_json({"ok": False, "error": "policy_snapshot_failed", "reason": str(exc)})
+        return 1
+    progress_header, progress_divider, progress_rows = _progress_table_lines(snapshot["policy"], [item for item in config.get("storyRange", []) if isinstance(item, str)])
+    text = read_text(template)
+    replacements: dict[str, Any] = {
+        "epic": config.get("epic", ""),
+        "epicName": config.get("epicName", ""),
+        "storyRange": config.get("storyRange", []),
+        "status": config.get("status", "READY"),
+        "currentStory": config.get("currentStory"),
+        "currentStep": config.get("currentStep"),
+        "stepsCompleted": config.get("stepsCompleted", []),
+        "lastUpdated": now,
+        "createdAt": now,
+        "aiCommand": config.get("aiCommand", ""),
+        "agentsFile": config.get("agentsFile", ""),
+        "complexityFile": config.get("complexityFile", ""),
+        "policyVersion": snapshot["policyVersion"],
+        "policySnapshotFile": snapshot["policySnapshotFile"],
+        "policySnapshotHash": snapshot["policySnapshotHash"],
+        "legacyPolicy": False,
+    }
+    overrides = config.get("overrides", {}) if isinstance(config.get("overrides"), dict) else {}
+    text = re.sub(
+        r"(?m)^overrides:\n(?:(?:\s{2}.*\n)*)",
+        "overrides:\n"
+        f"  skipAutomate: {str(bool(overrides.get('skipAutomate', False))).lower()}\n"
+        f"  maxParallel: {int(overrides.get('maxParallel', 1) or 1)}\n",
+        text,
+    )
+    custom_instructions = json.dumps(config.get("customInstructions", ""))
+    text = re.sub(r"(?m)^customInstructions:.*$", lambda m: f"customInstructions: {custom_instructions}", text)
+    if policy_selection["workflowTrack"] == "tea":
+        tea_frontmatter = (
+            f'workflowTrack: {json.dumps(policy_selection["workflowTrack"])}\n'
+            f"selectedOptionalSteps: {json.dumps(policy_selection['selectedOptionalSteps'])}\n"
+            f"manualCheckpoints: {json.dumps(policy_selection['manualCheckpoints'])}\n"
+            f"policyNotes: {json.dumps(policy_selection['notes'])}\n"
+        )
+        text = text.replace("customInstructions: " + custom_instructions + "\n", "customInstructions: " + custom_instructions + "\n" + tea_frontmatter)
+    agent_config = config.get("agentConfig")
+    if isinstance(agent_config, dict):
+        per_task = agent_config.get("perTask", {})
+        if not isinstance(per_task, dict):
+            per_task = {}
+        legacy_retro = agent_config.get("retro")
+        if isinstance(legacy_retro, dict) and "retro" not in per_task:
+            per_task = {**per_task, "retro": legacy_retro}
+        default_fallback = agent_config.get("defaultFallback")
+        if "defaultFallback" not in agent_config:
+            default_fallback = agent_config.get("fallback", False)
+        if default_fallback is None:
+            default_fallback = False
+        default_primary = agent_config.get("defaultPrimary")
+        if default_primary is None:
+            default_primary = agent_config.get("primary") or "auto"
+
+        lines = [
+            "agentConfig:",
+            f"  defaultPrimary: {json.dumps(default_primary)}",
+            f"  defaultFallback: {json.dumps(default_fallback)}",
+        ]
+        if isinstance(per_task, dict) and per_task:
+            lines.append("  perTask:")
+            for task in sorted(per_task):
+                entry = per_task[task]
+                if not isinstance(entry, dict):
+                    continue
+                lines.append(f"    {task}:")
+                if "primary" in entry:
+                    lines.append(f"      primary: {json.dumps(entry['primary'])}")
+                if "fallback" in entry:
+                    value = entry["fallback"]
+                    lines.append(f"      fallback: {'false' if value is False else json.dumps(value)}")
+        complexity_overrides = agent_config.get("complexityOverrides", {})
+        if isinstance(complexity_overrides, dict) and complexity_overrides:
+            lines.append("  complexityOverrides:")
+            for level in sorted(complexity_overrides):
+                task_map = complexity_overrides[level]
+                if not isinstance(task_map, dict) or not task_map:
+                    continue
+                lines.append(f"    {level}:")
+                for task in sorted(task_map):
+                    entry = task_map[task]
+                    if not isinstance(entry, dict):
+                        continue
+                    lines.append(f"      {task}:")
+                    if "primary" in entry:
+                        lines.append(f"        primary: {json.dumps(entry['primary'])}")
+                    if "fallback" in entry:
+                        value = entry["fallback"]
+                        lines.append(f"        fallback: {'false' if value is False else json.dumps(value)}")
+        block = "\n".join(lines) + "\n"
+        text = re.sub(r"(?m)^agentConfig:\n(?:(?:\s{2}.*\n)*)", block, text)
+    for key, value in replacements.items():
+        text = re.sub(rf"(?m)^{re.escape(key)}:.*$", lambda m, k=key, v=value: f"{k}: {json.dumps(v)}", text)
+    story_range = [item for item in config.get("storyRange", []) if isinstance(item, str)]
+    body = {
+        "{{epicName}}": str(config.get("epicName", "")),
+        "{{epic}}": str(config.get("epic", "")),
+        "{{storyRange}}": ", ".join(story_range),
+        "{{createdAt}}": now,
+        "{{overrides.skipAutomate}}": str(bool(overrides.get("skipAutomate", False))).lower(),
+        "{{overrides.maxParallel}}": str(int(overrides.get("maxParallel", 1) or 1)),
+        "{{customInstructions}}": str(config.get("customInstructions", "")),
+    }
+    tea_block = ""
+    if policy_selection["workflowTrack"] == "tea":
+        tea_block_lines = [
+            "**TEA Configuration:**",
+            "- Mandatory TEA Core: atdd, test_automate, test_review, trace",
+            f"- Optional Automated Steps: {', '.join(policy_selection['selectedOptionalSteps']) or 'none'}",
+            f"- Policy Notes: {'; '.join(policy_selection['notes']) or 'none'}",
+            "",
+        ]
+        tea_block = "\n".join(tea_block_lines)
+    body["{{teaConfigurationBlock}}"] = tea_block
+    for key, value in body.items():
+        text = text.replace(key, value)
+    text = text.replace("| Story | create-story | dev-story | automate | code-review | git-commit | Status |", progress_header)
+    text = text.replace("|-------|--------------|-----------|----------|-------------|------------|--------|", progress_divider)
+    text = text.replace("<!-- Progress rows will be appended here -->", progress_rows)
+    output_path.write_text(text)
+    write_json({"ok": True, "path": str(output_path), "createdAt": now})
+    return 0
 
 
 def _normalize_string_list(value: Any) -> list[str]:
@@ -172,12 +361,10 @@ def _build_run_policy(project_root: Path, config: dict[str, Any]) -> dict[str, A
         assets_root = _tea_assets_root(project_root, config)
         include_nfr = "nfr" in selected
         include_retro = "retro" in selected
-        for unsupported in sorted(selected & UNSUPPORTED_AUTOMATED_OPTIONS):
-            notes.append(f"{unsupported} is not automated on the TEA track in v1 and was not added to the workflow sequence.")
-        if "qa-generate-e2e-tests" in selected:
-            notes.append("qa-generate-e2e-tests is superseded by TEA test_automate on the TEA track and was ignored.")
         if "validate-create-story" in selected:
             notes.append("validate-create-story remains an advisory pre-dev quality check and is not yet automated by story-automator.")
+        if "qa-generate-e2e-tests" in selected:
+            notes.append("qa-generate-e2e-tests is superseded by TEA test_automate on the TEA track and was ignored.")
         sequence = ["create", "atdd", "dev", "test_automate", "test_review"]
         if include_nfr:
             sequence.append("nfr")
@@ -209,216 +396,15 @@ def _build_run_policy(project_root: Path, config: dict[str, Any]) -> dict[str, A
             selected.discard("qa-generate-e2e-tests")
         policy_override = {"workflow": {"sequence": sequence}}
 
-    recognized_manual = sorted(checkpoint for checkpoint in manual if checkpoint in MANUAL_CHECKPOINTS)
+    if manual:
+        notes.append("checkpoint-preview is out of scope for story-automator and was ignored.")
     return {
         "policyOverride": policy_override,
         "workflowTrack": track,
         "selectedOptionalSteps": sorted(selected),
-        "manualCheckpoints": recognized_manual,
+        "manualCheckpoints": [],
         "notes": notes,
     }
-
-
-def _story_progress_steps(policy: dict[str, Any]) -> list[str]:
-    sequence = ((policy.get("workflow") or {}).get("sequence")) or []
-    return [str(step) for step in sequence if isinstance(step, str) and step and step != "retro"]
-
-
-def _progress_headers(steps: list[str]) -> list[str]:
-    headers = ["Story"]
-    headers.extend(STEP_DISPLAY_NAMES.get(step, step.replace("_", "-")) for step in steps)
-    headers.extend(["git-commit", "Status"])
-    return headers
-
-
-def _markdown_divider(width: int) -> list[str]:
-    return ["-------" if idx == 0 else "----------" for idx in range(width)]
-
-
-def _progress_table_lines(policy: dict[str, Any], story_range: list[str]) -> tuple[str, str, str]:
-    steps = _story_progress_steps(policy)
-    headers = _progress_headers(steps)
-    divider = _markdown_divider(len(headers))
-    pending_cells = ["⏳"] * len(steps) + ["⏳", "pending"]
-    rows = "\n".join("| " + " | ".join([story_id, *pending_cells]) + " |" for story_id in story_range)
-    return (
-        "| " + " | ".join(headers) + " |",
-        "| " + " | ".join(divider) + " |",
-        rows,
-    )
-
-
-def cmd_build_state_doc(args: list[str]) -> int:
-    template = ""
-    output_folder = ""
-    config_file = ""
-    config_json = ""
-    for idx, arg in enumerate(args):
-        if arg == "--template" and idx + 1 < len(args):
-            template = args[idx + 1]
-        elif arg == "--output-folder" and idx + 1 < len(args):
-            output_folder = args[idx + 1]
-        elif arg == "--config-file" and idx + 1 < len(args):
-            config_file = args[idx + 1]
-        elif arg == "--config-json" and idx + 1 < len(args):
-            config_json = args[idx + 1]
-    if not template or not file_exists(template) or not output_folder:
-        write_json({"ok": False, "error": "missing_template_or_output"})
-        return 1
-    if config_file and file_exists(config_file):
-        config_json = read_text(config_file)
-    if not config_json.strip():
-        write_json({"ok": False, "error": "missing_config"})
-        return 1
-    try:
-        config = json.loads(config_json)
-    except json.JSONDecodeError:
-        write_json({"ok": False, "error": "missing_config"})
-        return 1
-    ensure_dir(output_folder)
-    now = now_utc_z()
-    stamp = now_utc().strftime("%Y%m%d-%H%M%S")
-    epic = str(config.get("epic") or "epic")
-    safe_epic = re.sub(r"[^a-zA-Z0-9]+", "-", epic).strip("-") or "epic"
-    output_path = Path(output_folder) / f"orchestration-{safe_epic}-{stamp}.md"
-    policy_selection = _build_run_policy(Path(get_project_root()), config)
-    try:
-        snapshot = snapshot_effective_policy(get_project_root(), inline_override=policy_selection["policyOverride"])
-    except (FileNotFoundError, PolicyError, ValueError) as exc:
-        write_json({"ok": False, "error": "policy_snapshot_failed", "reason": str(exc)})
-        return 1
-    progress_header, progress_divider, progress_rows = _progress_table_lines(snapshot["policy"], [item for item in config.get("storyRange", []) if isinstance(item, str)])
-    text = read_text(template)
-    replacements: dict[str, Any] = {
-        "epic": config.get("epic", ""),
-        "epicName": config.get("epicName", ""),
-        "storyRange": config.get("storyRange", []),
-        "status": config.get("status", "READY"),
-        "currentStory": config.get("currentStory"),
-        "currentStep": config.get("currentStep"),
-        "stepsCompleted": config.get("stepsCompleted", []),
-        "lastUpdated": now,
-        "createdAt": now,
-        "aiCommand": config.get("aiCommand", ""),
-        "agentsFile": config.get("agentsFile", ""),
-        "complexityFile": config.get("complexityFile", ""),
-        "policyVersion": snapshot["policyVersion"],
-        "policySnapshotFile": snapshot["policySnapshotFile"],
-        "policySnapshotHash": snapshot["policySnapshotHash"],
-        "legacyPolicy": False,
-        "workflowTrack": policy_selection["workflowTrack"],
-        "selectedOptionalSteps": policy_selection["selectedOptionalSteps"],
-        "manualCheckpoints": policy_selection["manualCheckpoints"],
-        "policyNotes": policy_selection["notes"],
-    }
-    overrides = config.get("overrides", {}) if isinstance(config.get("overrides"), dict) else {}
-    text = re.sub(
-        r"(?m)^overrides:\n(?:(?:\s{2}.*\n)*)",
-        "overrides:\n"
-        f"  skipAutomate: {str(bool(overrides.get('skipAutomate', False))).lower()}\n"
-        f"  maxParallel: {int(overrides.get('maxParallel', 1) or 1)}\n",
-        text,
-    )
-    custom_instructions = json.dumps(config.get("customInstructions", ""))
-    text = re.sub(r"(?m)^customInstructions:.*$", lambda m: f"customInstructions: {custom_instructions}", text)
-    text = re.sub(
-        r"(?m)^workflowTrack:.*$",
-        lambda m: f'workflowTrack: {json.dumps(policy_selection["workflowTrack"])}',
-        text,
-    )
-    text = re.sub(
-        r"(?m)^selectedOptionalSteps:.*$",
-        lambda m: f"selectedOptionalSteps: {json.dumps(policy_selection['selectedOptionalSteps'])}",
-        text,
-    )
-    text = re.sub(
-        r"(?m)^manualCheckpoints:.*$",
-        lambda m: f"manualCheckpoints: {json.dumps(policy_selection['manualCheckpoints'])}",
-        text,
-    )
-    text = re.sub(
-        r"(?m)^policyNotes:.*$",
-        lambda m: f"policyNotes: {json.dumps(policy_selection['notes'])}",
-        text,
-    )
-    agent_config = config.get("agentConfig")
-    if isinstance(agent_config, dict):
-        per_task = agent_config.get("perTask", {})
-        if not isinstance(per_task, dict):
-            per_task = {}
-        legacy_retro = agent_config.get("retro")
-        if isinstance(legacy_retro, dict) and "retro" not in per_task:
-            per_task = {**per_task, "retro": legacy_retro}
-        default_fallback = agent_config.get("defaultFallback")
-        if "defaultFallback" not in agent_config:
-            default_fallback = agent_config.get("fallback", False)
-        if default_fallback is None:
-            default_fallback = False
-        default_primary = agent_config.get("defaultPrimary")
-        if default_primary is None:
-            default_primary = agent_config.get("primary") or "auto"
-
-        lines = [
-            "agentConfig:",
-            f"  defaultPrimary: {json.dumps(default_primary)}",
-            f"  defaultFallback: {json.dumps(default_fallback)}",
-        ]
-        if isinstance(per_task, dict) and per_task:
-            lines.append("  perTask:")
-            for task in sorted(per_task):
-                entry = per_task[task]
-                if not isinstance(entry, dict):
-                    continue
-                lines.append(f"    {task}:")
-                if "primary" in entry:
-                    lines.append(f"      primary: {json.dumps(entry['primary'])}")
-                if "fallback" in entry:
-                    value = entry["fallback"]
-                    lines.append(f"      fallback: {'false' if value is False else json.dumps(value)}")
-        complexity_overrides = agent_config.get("complexityOverrides", {})
-        if isinstance(complexity_overrides, dict) and complexity_overrides:
-            lines.append("  complexityOverrides:")
-            for level in sorted(complexity_overrides):
-                task_map = complexity_overrides[level]
-                if not isinstance(task_map, dict) or not task_map:
-                    continue
-                lines.append(f"    {level}:")
-                for task in sorted(task_map):
-                    entry = task_map[task]
-                    if not isinstance(entry, dict):
-                        continue
-                    lines.append(f"      {task}:")
-                    if "primary" in entry:
-                        lines.append(f"        primary: {json.dumps(entry['primary'])}")
-                    if "fallback" in entry:
-                        value = entry["fallback"]
-                        lines.append(f"        fallback: {'false' if value is False else json.dumps(value)}")
-        block = "\n".join(lines) + "\n"
-        text = re.sub(r"(?m)^agentConfig:\n(?:(?:\s{2}.*\n)*)", block, text)
-    for key, value in replacements.items():
-        text = re.sub(rf"(?m)^{re.escape(key)}:.*$", lambda m, k=key, v=value: f"{k}: {json.dumps(v)}", text)
-    story_range = [item for item in config.get("storyRange", []) if isinstance(item, str)]
-    body = {
-        "{{epicName}}": str(config.get("epicName", "")),
-        "{{epic}}": str(config.get("epic", "")),
-        "{{storyRange}}": ", ".join(story_range),
-        "{{createdAt}}": now,
-        "{{overrides.skipAutomate}}": str(bool(overrides.get("skipAutomate", False))).lower(),
-        "{{overrides.maxParallel}}": str(int(overrides.get("maxParallel", 1) or 1)),
-        "{{customInstructions}}": str(config.get("customInstructions", "")),
-        "{{workflowTrack}}": str(policy_selection["workflowTrack"]),
-        "{{selectedOptionalSteps}}": ", ".join(policy_selection["selectedOptionalSteps"]) or "none",
-        "{{manualCheckpoints}}": ", ".join(policy_selection["manualCheckpoints"]) or "none",
-        "{{policyNotes}}": "\n".join(f"- {note}" for note in policy_selection["notes"]) or "- none",
-    }
-    for key, value in body.items():
-        text = text.replace(key, value)
-    text = text.replace("| Story | create-story | dev-story | automate | code-review | git-commit | Status |", progress_header)
-    text = text.replace("|-------|--------------|-----------|----------|-------------|------------|--------|", progress_divider)
-    text = text.replace("<!-- Progress rows will be appended here -->", progress_rows)
-    output_path.write_text(text)
-    write_json({"ok": True, "path": str(output_path), "createdAt": now})
-    return 0
 
 
 def cmd_build_run_policy(args: list[str]) -> int:
