@@ -10,6 +10,47 @@ from ..core.runtime_policy import PolicyError, load_policy_for_state, snapshot_e
 from ..core.utils import count_matches, ensure_dir, file_exists, get_project_root, now_utc, now_utc_z, read_text, write_json
 
 
+STEP_DISPLAY_NAMES = {
+    "create": "create-story",
+    "dev": "dev-story",
+    "auto": "automate",
+    "review": "code-review",
+    "atdd": "atdd",
+    "test_automate": "test-automate",
+    "test_review": "test-review",
+    "trace": "trace",
+}
+
+
+def _story_progress_steps(policy: dict[str, Any]) -> list[str]:
+    sequence = ((policy.get("workflow") or {}).get("sequence")) or []
+    return [str(step) for step in sequence if isinstance(step, str) and step and step != "retro"]
+
+
+def _progress_headers(steps: list[str]) -> list[str]:
+    headers = ["Story"]
+    headers.extend(STEP_DISPLAY_NAMES.get(step, step.replace("_", "-")) for step in steps)
+    headers.extend(["git-commit", "Status"])
+    return headers
+
+
+def _markdown_divider(width: int) -> list[str]:
+    return ["-------" if idx == 0 else "----------" for idx in range(width)]
+
+
+def _progress_table_lines(policy: dict[str, Any], story_range: list[str]) -> tuple[str, str, str]:
+    steps = _story_progress_steps(policy)
+    headers = _progress_headers(steps)
+    divider = _markdown_divider(len(headers))
+    pending_cells = ["⏳"] * len(steps) + ["⏳", "pending"]
+    rows = "\n".join("| " + " | ".join([story_id, *pending_cells]) + " |" for story_id in story_range)
+    return (
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join(divider) + " |",
+        rows,
+    )
+
+
 def cmd_build_state_doc(args: list[str]) -> int:
     template = ""
     output_folder = ""
@@ -48,6 +89,7 @@ def cmd_build_state_doc(args: list[str]) -> int:
     except (FileNotFoundError, PolicyError, ValueError) as exc:
         write_json({"ok": False, "error": "policy_snapshot_failed", "reason": str(exc)})
         return 1
+    progress_header, progress_divider, progress_rows = _progress_table_lines(snapshot["policy"], [item for item in config.get("storyRange", []) if isinstance(item, str)])
     text = read_text(template)
     replacements: dict[str, Any] = {
         "epic": config.get("epic", ""),
@@ -134,7 +176,6 @@ def cmd_build_state_doc(args: list[str]) -> int:
     for key, value in replacements.items():
         text = re.sub(rf"(?m)^{re.escape(key)}:.*$", lambda m, k=key, v=value: f"{k}: {json.dumps(v)}", text)
     story_range = [item for item in config.get("storyRange", []) if isinstance(item, str)]
-    progress_rows = "\n".join(f"| {story_id} | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | pending |" for story_id in story_range)
     body = {
         "{{epicName}}": str(config.get("epicName", "")),
         "{{epic}}": str(config.get("epic", "")),
@@ -146,6 +187,8 @@ def cmd_build_state_doc(args: list[str]) -> int:
     }
     for key, value in body.items():
         text = text.replace(key, value)
+    text = text.replace("| Story | create-story | dev-story | automate | code-review | git-commit | Status |", progress_header)
+    text = text.replace("|-------|--------------|-----------|----------|-------------|------------|--------|", progress_divider)
     text = text.replace("<!-- Progress rows will be appended here -->", progress_rows)
     output_path.write_text(text)
     write_json({"ok": True, "path": str(output_path), "createdAt": now})
@@ -201,9 +244,10 @@ def cmd_state_metrics(args: list[str]) -> int:
             continue
         if in_table and line.startswith("|"):
             parts = [part.strip() for part in line.split("|")]
-            if len(parts) >= 8 and parts[1]:
+            values = [part for part in parts[1:-1] if part]
+            if len(values) >= 2:
                 total += 1
-                if any(token in parts[7].lower() for token in ("done", "complete", "completed")):
+                if any(token in values[-1].lower() for token in ("done", "complete", "completed")):
                     completed += 1
             continue
         if in_table and not line.startswith("|"):

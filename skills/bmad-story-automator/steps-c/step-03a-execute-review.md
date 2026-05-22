@@ -10,7 +10,7 @@ reviewLoop: '../data/code-review-loop.md'
 
 # Step 3a: Execute Review Phase
 
-**Goal:** Run automate (guardrails) and code review loop for the current story.
+**Goal:** Run the policy-defined quality phase and final code review loop for the current story.
 **Interaction mode:** Deterministic autonomous execution.
 
 ---
@@ -26,8 +26,22 @@ Set: `scripts="{scriptsDir}"`
 
 ## Story Loop (Continue from Step 3)
 
+### C. Pre-Review Quality Steps
+
+The pinned workflow policy snapshot decides which pre-review quality steps apply.
+
+- Standard default path: optional `auto`, then `review`
+- TEA v1 opt-in path: `test_automate`, `test_review`, `trace`, then `review`
+
+For TEA v1:
+
+- `test_automate`, `test_review`, and `trace` use the same spawn/monitor/parse pattern as other session-exit steps
+- successful completion means execution completed, not artifact verification
+- use the current per-task agent selection from the agents file
+- when updating progress, do not assume the standard fixed column order if TEA mode is active
+
 ### C. Automate (Guardrails)
-*Skip if `overrides.skipAutomate`*
+*Run only if the pinned policy sequence includes `auto` and `overrides.skipAutomate` is false*
 
 **Apply retry/fallback pattern from `{retryStrategy}`:** Non-blocking, but still retry on failure.
 
@@ -56,6 +70,25 @@ result=$("$scripts" monitor-session "$session" --json --agent "$current_agent")
   ```
   Display: `[story {N}/{total}] automate -> skip (non-blocking)`
   → proceed to D
+
+### C.1 TEA Quality Steps
+
+*Run only if the pinned policy sequence includes any of: `test_automate`, `test_review`, `trace`*
+
+For each enabled TEA step:
+
+```bash
+session=$("$scripts" tmux-wrapper spawn {step} {epic} {story_id} \
+  --agent "$current_agent" \
+  --command "$("$scripts" tmux-wrapper build-cmd {step} {story_id} --agent "$current_agent" --state-file "$state_file")")
+result=$("$scripts" monitor-session "$session" --json --agent "$current_agent")
+"$scripts" tmux-wrapper kill "$session"
+parsed=$("$scripts" orchestrator-helper parse-output "$(printf '%s' "$result" | jq -r '.output_file')" {step} --state-file "$state_file")
+```
+
+- If `next_action == "proceed"` → continue to the next policy-defined step
+- If `next_action == "retry"` or the session crashes → apply the retry/fallback pattern
+- TEA v1 success for these steps means session execution completed successfully
 
 ### D. Code Review Loop
 

@@ -10,7 +10,7 @@ from .runtime_layout import active_marker_path, bundled_story_skill_root, resolv
 from .utils import ensure_dir, get_project_root, iso_now, md5_hex8, read_text, write_atomic
 
 VALID_TOP_LEVEL_KEYS = {"version", "snapshot", "runtime", "workflow", "steps"}
-VALID_STEP_NAMES = {"create", "dev", "auto", "review", "retro"}
+VALID_STEP_NAMES = {"create", "dev", "auto", "review", "retro", "atdd", "test_automate", "test_review", "trace"}
 VALID_VERIFIERS = {"create_story_artifact", "session_exit", "review_completion", "epic_complete"}
 VALID_ASSET_NAMES = {"skill", "workflow", "instructions", "checklist", "template"}
 VALID_PARSER_PROVIDERS = {"claude"}
@@ -186,6 +186,15 @@ def step_contract(policy: dict[str, Any], step: str) -> dict[str, Any]:
 def review_max_cycles(policy: dict[str, Any]) -> int:
     repeat = ((policy.get("workflow") or {}).get("repeat") or {}).get("review") or {}
     return int(repeat.get("maxCycles", 5))
+
+
+def workflow_sequence(policy: dict[str, Any]) -> list[str]:
+    sequence = ((policy.get("workflow") or {}).get("sequence")) or []
+    return [str(step) for step in sequence if isinstance(step, str) and step]
+
+
+def story_task_sequence(policy: dict[str, Any]) -> list[str]:
+    return [step for step in workflow_sequence(policy) if step != "retro"]
 
 
 def crash_max_retries(policy: dict[str, Any]) -> int:

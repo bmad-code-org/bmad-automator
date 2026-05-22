@@ -461,6 +461,68 @@ class StatePolicyMetadataTests(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["error"], "policy_snapshot_failed")
 
+    def test_build_state_doc_renders_tea_progress_columns_from_pinned_policy(self) -> None:
+        self._install_tea_skills()
+        override_dir = self.project_root / "_bmad" / "bmm"
+        override_dir.mkdir(parents=True, exist_ok=True)
+        (override_dir / "story-automator.policy.json").write_text(
+            json.dumps(
+                {
+                    "workflow": {"sequence": ["create", "atdd", "dev", "test_automate", "test_review", "trace", "review"]},
+                    "steps": _tea_steps_override(self.project_root),
+                }
+            ),
+            encoding="utf-8",
+        )
+        state_file = self._build_state()
+        text = state_file.read_text(encoding="utf-8")
+        self.assertIn("| Story | create-story | atdd | dev-story | test-automate | test-review | trace | code-review | git-commit | Status |", text)
+        self.assertIn("| 1.1 | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | pending |", text)
+
+    def test_agents_build_uses_pinned_tea_story_sequence(self) -> None:
+        self._install_tea_skills()
+        override_dir = self.project_root / "_bmad" / "bmm"
+        override_dir.mkdir(parents=True, exist_ok=True)
+        (override_dir / "story-automator.policy.json").write_text(
+            json.dumps(
+                {
+                    "workflow": {"sequence": ["create", "atdd", "dev", "test_automate", "test_review", "trace", "review"]},
+                    "steps": _tea_steps_override(self.project_root),
+                }
+            ),
+            encoding="utf-8",
+        )
+        state_file = self._build_state()
+        complexity_file = self.project_root / "complexity.json"
+        complexity_file.write_text(
+            json.dumps({"stories": [{"storyId": "1.1", "title": "Story 1", "complexity": {"level": "medium"}}]}),
+            encoding="utf-8",
+        )
+        agents_file = self.project_root / "agents.md"
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_orchestrator_helper(
+                [
+                    "agents-build",
+                    "--state-file",
+                    str(state_file),
+                    "--complexity-file",
+                    str(complexity_file),
+                    "--output",
+                    str(agents_file),
+                    "--config-json",
+                    json.dumps({"defaultPrimary": "claude", "defaultFallback": False}),
+                ]
+            )
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertTrue(payload["ok"])
+        text = agents_file.read_text(encoding="utf-8")
+        self.assertIn('"atdd"', text)
+        self.assertIn('"test_automate"', text)
+        self.assertIn('"test_review"', text)
+        self.assertIn('"trace"', text)
+
     def test_build_cmd_rejects_unknown_step_via_policy(self) -> None:
         stderr = io.StringIO()
         with patch_env(self.project_root), redirect_stderr(stderr):
@@ -525,6 +587,19 @@ class StatePolicyMetadataTests(unittest.TestCase):
         (self.project_root / ".claude" / "skills" / "bmad-dev-story" / "checklist.md").write_text("# checklist\n", encoding="utf-8")
         (self.project_root / ".claude" / "skills" / "bmad-qa-generate-e2e-tests" / "checklist.md").write_text("# checklist\n", encoding="utf-8")
 
+    def _install_tea_skills(self) -> None:
+        _write_tea_assets(self.project_root)
+        for name in (
+            "bmad-tea-testarch-atdd",
+            "bmad-tea-testarch-automate",
+            "bmad-tea-testarch-test-review",
+            "bmad-tea-testarch-trace",
+        ):
+            skill_dir = self.project_root / ".claude" / "skills" / name
+            skill_dir.mkdir(parents=True, exist_ok=True)
+            (skill_dir / "SKILL.md").write_text(f"# {name}\n", encoding="utf-8")
+            (skill_dir / "workflow.md").write_text(f"# {name}\n", encoding="utf-8")
+
 
 class patch_env:
     def __init__(self, project_root: Path, extra: dict[str, str] | None = None) -> None:
@@ -549,6 +624,82 @@ class patch_env:
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
+
+
+def _write_tea_assets(project_root: Path) -> None:
+    prompts = project_root / "_bmad" / "tea" / "story-automator" / "prompts"
+    parse = project_root / "_bmad" / "tea" / "story-automator" / "parse"
+    prompts.mkdir(parents=True, exist_ok=True)
+    parse.mkdir(parents=True, exist_ok=True)
+    (prompts / "atdd.md").write_text("ATDD {{story_id}}\n", encoding="utf-8")
+    (prompts / "test_automate.md").write_text("TEST AUTOMATE {{story_id}}\n", encoding="utf-8")
+    (prompts / "test_review.md").write_text("TEST REVIEW {{story_id}}\n", encoding="utf-8")
+    (prompts / "trace.md").write_text("TRACE {{story_id}}\n", encoding="utf-8")
+    (parse / "atdd.json").write_text(json.dumps({"requiredKeys": ["status", "failing_tests_created", "summary", "next_action"], "schema": {"status": "SUCCESS|FAILURE|AMBIGUOUS", "failing_tests_created": "true|false", "summary": "brief description", "next_action": "proceed|retry|escalate"}}), encoding="utf-8")
+    (parse / "test_automate.json").write_text(json.dumps({"requiredKeys": ["status", "tests_added", "summary", "next_action"], "schema": {"status": "SUCCESS|FAILURE|AMBIGUOUS", "tests_added": "integer", "summary": "brief description", "next_action": "proceed|retry|escalate"}}), encoding="utf-8")
+    (parse / "test_review.json").write_text(json.dumps({"requiredKeys": ["status", "issues_found", "summary", "next_action"], "schema": {"status": "SUCCESS|FAILURE|AMBIGUOUS", "issues_found": "integer", "summary": "brief description", "next_action": "proceed|retry|escalate"}}), encoding="utf-8")
+    (parse / "trace.json").write_text(json.dumps({"requiredKeys": ["status", "trace_updated", "summary", "next_action"], "schema": {"status": "SUCCESS|FAILURE|AMBIGUOUS", "trace_updated": "true|false", "summary": "brief description", "next_action": "proceed|retry|escalate"}}), encoding="utf-8")
+
+
+def _tea_steps_override(project_root: Path) -> dict[str, object]:
+    return {
+        "atdd": {
+            "label": "atdd",
+            "assets": {
+                "skillName": "bmad-tea-testarch-atdd",
+                "workflowCandidates": ["workflow.md", "workflow.yaml"],
+                "instructionsCandidates": [],
+                "checklistCandidates": ["checklist.md"],
+                "templateCandidates": [],
+                "required": ["skill"],
+            },
+            "prompt": {"templateFile": "_bmad/tea/story-automator/prompts/atdd.md", "interactionMode": "autonomous"},
+            "parse": {"schemaFile": "_bmad/tea/story-automator/parse/atdd.json"},
+            "success": {"verifier": "session_exit"},
+        },
+        "test_automate": {
+            "label": "test-automate",
+            "assets": {
+                "skillName": "bmad-tea-testarch-automate",
+                "workflowCandidates": ["workflow.md", "workflow.yaml"],
+                "instructionsCandidates": [],
+                "checklistCandidates": ["checklist.md"],
+                "templateCandidates": [],
+                "required": ["skill"],
+            },
+            "prompt": {"templateFile": "_bmad/tea/story-automator/prompts/test_automate.md", "interactionMode": "autonomous"},
+            "parse": {"schemaFile": "_bmad/tea/story-automator/parse/test_automate.json"},
+            "success": {"verifier": "session_exit"},
+        },
+        "test_review": {
+            "label": "test-review",
+            "assets": {
+                "skillName": "bmad-tea-testarch-test-review",
+                "workflowCandidates": ["workflow.md", "workflow.yaml"],
+                "instructionsCandidates": [],
+                "checklistCandidates": ["checklist.md"],
+                "templateCandidates": [],
+                "required": ["skill"],
+            },
+            "prompt": {"templateFile": "_bmad/tea/story-automator/prompts/test_review.md", "interactionMode": "autonomous"},
+            "parse": {"schemaFile": "_bmad/tea/story-automator/parse/test_review.json"},
+            "success": {"verifier": "session_exit"},
+        },
+        "trace": {
+            "label": "trace",
+            "assets": {
+                "skillName": "bmad-tea-testarch-trace",
+                "workflowCandidates": ["workflow.md", "workflow.yaml"],
+                "instructionsCandidates": [],
+                "checklistCandidates": ["checklist.md"],
+                "templateCandidates": [],
+                "required": ["skill"],
+            },
+            "prompt": {"templateFile": "_bmad/tea/story-automator/prompts/trace.md", "interactionMode": "autonomous"},
+            "parse": {"schemaFile": "_bmad/tea/story-automator/parse/trace.json"},
+            "success": {"verifier": "session_exit"},
+        },
+    }
 
 
 if __name__ == "__main__":

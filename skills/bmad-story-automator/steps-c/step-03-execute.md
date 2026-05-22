@@ -54,6 +54,7 @@ Load from state document (located via `{stateFilePattern}`; output folder `{outp
 - `storyRange`, `currentStory`, `currentStep`
 - `overrides` (skipAutomate, maxParallel)
 - `customInstructions`
+- pinned workflow policy snapshot
 
 Resolve agent configuration using deterministic agents file (see `{retryStrategy}` for full function):
 ```bash
@@ -63,6 +64,15 @@ state_file="{outputFile}"
 
 **IF resuming** (currentStory set): Skip to that point in loop.
 **IF fresh**: Display "**Starting build cycle for {count} stories...**"
+
+### Workflow Sequence Rule
+
+The pinned workflow policy snapshot is authoritative for per-story task order.
+
+- Standard default path: `create -> dev -> auto -> review`
+- TEA v1 opt-in path: `create -> atdd -> dev -> test_automate -> test_review -> trace -> review`
+
+Do not silently switch to TEA because TEA skills are installed. Only follow TEA steps when the pinned policy sequence explicitly includes them.
 
 ## 🚨 CRITICAL: Execution Patterns
 
@@ -146,6 +156,26 @@ validation=$("$scripts" orchestrator-helper verify-step create {story_id} --stat
 - If `validation.verified == false` AND attempts < 5 → retry with next agent (see `{retryStrategy}`)
 - If `validation.verified == false` AND attempts == 5 → escalate (all retries exhausted)
 
+### A.1 ATDD
+*Run only if the pinned policy sequence includes `atdd`*
+
+Use the same spawn/monitor/parse pattern as other session-exit steps:
+
+```bash
+session=$("$scripts" tmux-wrapper spawn atdd {epic} {story_id} \
+  --agent "$current_agent" \
+  --command "$("$scripts" tmux-wrapper build-cmd atdd {story_id} --agent "$current_agent" --state-file "$state_file")")
+result=$("$scripts" monitor-session "$session" --json --agent "$current_agent")
+"$scripts" tmux-wrapper kill "$session"
+parsed=$("$scripts" orchestrator-helper parse-output "$(printf '%s' "$result" | jq -r '.output_file')" atdd --state-file "$state_file")
+```
+
+- If `next_action == "proceed"` → continue to dev
+- If `next_action == "retry"` or session crashed → retry with fallback pattern
+- Treat successful completion as execution completion only; TEA artifact verification is not part of v1
+
+When updating progress, do not assume the standard fixed column order if TEA mode is active.
+
 ### B. Dev Story
 
 **Apply retry/fallback pattern from `{retryStrategy}`:** Up to 5 attempts, alternating agents.
@@ -186,7 +216,7 @@ reasons=$(echo "$parsed" | jq -c '.reasons // []')
 
 ## Auto-Proceed to Review Phase
 
-Display: "**Dev story complete. Proceeding to automate and code review...**"
+Display: "**Dev story complete. Proceeding to the next policy-defined quality phase...**"
 
 ```bash
 "$scripts" orchestrator-helper state-update "$state_file" \
