@@ -21,6 +21,7 @@ def load_bundled_policy(project_root: str | None = None, *, resolve_assets: bool
     bundle_root = bundled_skill_root(root)
     policy = _read_json(bundle_root / "data" / "orchestration-policy.json")
     _validate_policy_shape(policy)
+    _prune_unreferenced_steps(policy)
     if resolve_assets:
         _resolve_policy_paths(policy, project_root=root, bundle_root=bundle_root)
     else:
@@ -45,6 +46,7 @@ def load_effective_policy(
     policy = _deep_merge(_deep_merge(bundled, override), inline_override or {})
     _apply_legacy_env(policy)
     _validate_policy_shape(policy)
+    _prune_unreferenced_steps(policy)
     _clear_resolved_fields(policy)
     if resolve_assets:
         _resolve_policy_paths(policy, project_root=root, bundle_root=bundled_skill_root(root))
@@ -115,6 +117,7 @@ def load_policy_snapshot(
     except json.JSONDecodeError as exc:
         raise PolicyError(f"policy json invalid: {path}") from exc
     _validate_policy_shape(policy)
+    _prune_unreferenced_steps(policy)
     if resolve_assets:
         _resolve_policy_paths(policy, project_root=root, bundle_root=bundled_skill_root(root))
     else:
@@ -270,6 +273,20 @@ def _clear_resolved_fields(policy: dict[str, Any]) -> None:
         if isinstance(success, dict):
             success.pop("contractPath", None)
             success.pop("contractHash", None)
+
+
+def _prune_unreferenced_steps(policy: dict[str, Any]) -> None:
+    steps = policy.get("steps")
+    workflow = policy.get("workflow")
+    if not isinstance(steps, dict) or not isinstance(workflow, dict):
+        return
+    sequence = workflow.get("sequence") or []
+    if not isinstance(sequence, list):
+        return
+    referenced = {step for step in sequence if isinstance(step, str)}
+    if not referenced:
+        return
+    policy["steps"] = {name: contract for name, contract in steps.items() if name in referenced}
 
 
 def _apply_legacy_env(policy: dict[str, Any]) -> None:

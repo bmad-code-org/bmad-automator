@@ -621,6 +621,29 @@ class StatePolicyMetadataTests(unittest.TestCase):
         self.assertTrue(payload["explicitTeaPolicy"])
         self.assertTrue(any("required TEA skills or assets are missing" in note for note in payload["reasons"]))
 
+    def test_detect_workflow_track_rejects_explicit_tea_policy_when_nfr_skill_is_missing(self) -> None:
+        self._install_tea_skills(canonical=True)
+        override_dir = self.project_root / "_bmad" / "bmm"
+        override_dir.mkdir(parents=True, exist_ok=True)
+        (override_dir / "story-automator.policy.json").write_text(
+            json.dumps(
+                {
+                    "workflow": {"sequence": ["create", "atdd", "dev", "test_automate", "test_review", "nfr", "trace", "review"]},
+                    "steps": _tea_steps_override(self.project_root, include_nfr=True),
+                }
+            ),
+            encoding="utf-8",
+        )
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_detect_workflow_track([])
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["recommendedTrack"], "standard")
+        self.assertFalse(payload["teaCapable"])
+        self.assertTrue(payload["explicitTeaPolicy"])
+        self.assertIn("bmad-testarch-nfr", payload["missingSkills"])
+
     def test_build_state_doc_snapshots_generated_tea_policy_and_renders_nfr_column(self) -> None:
         self._install_tea_skills(include_nfr=True)
         state_file = self._build_state(
@@ -637,6 +660,24 @@ class StatePolicyMetadataTests(unittest.TestCase):
         self.assertIn("**TEA Configuration:**", text)
         self.assertIn("- Mandatory TEA Core: atdd, test_automate, test_review, trace", text)
         self.assertIn("| Story | create-story | atdd | dev-story | test-automate | test-review | nfr | trace | code-review | git-commit | Status |", text)
+
+    def test_build_state_doc_standard_track_ignores_explicit_tea_override_steps(self) -> None:
+        self._install_tea_skills(canonical=True)
+        override_dir = self.project_root / "_bmad" / "bmm"
+        override_dir.mkdir(parents=True, exist_ok=True)
+        (override_dir / "story-automator.policy.json").write_text(
+            json.dumps(
+                {
+                    "workflow": {"sequence": ["create", "atdd", "dev", "test_automate", "test_review", "nfr", "trace", "review"]},
+                    "steps": _tea_steps_override(self.project_root, include_nfr=True),
+                }
+            ),
+            encoding="utf-8",
+        )
+        state_file = self._build_state({"workflowTrack": "standard"})
+        text = state_file.read_text(encoding="utf-8")
+        self.assertNotIn("**TEA Configuration:**", text)
+        self.assertIn("| Story | create-story | dev-story | automate | code-review | git-commit | Status |", text)
 
     def test_build_run_policy_uses_canonical_tea_skill_names_when_installed(self) -> None:
         self._install_tea_skills(include_nfr=True, canonical=True, write_assets=False)

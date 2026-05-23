@@ -536,16 +536,26 @@ def cmd_build_run_policy(args: list[str]) -> int:
     return 0
 
 
-def _has_explicit_tea_policy(project_root: Path) -> bool:
+def _explicit_policy_payload(project_root: Path) -> dict[str, Any]:
     override_path = project_root / "_bmad" / "bmm" / "story-automator.policy.json"
     if not override_path.is_file():
-        return False
+        return {}
     try:
         payload = json.loads(read_text(override_path))
     except (OSError, json.JSONDecodeError):
-        return False
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _explicit_tea_steps(project_root: Path) -> list[str]:
+    payload = _explicit_policy_payload(project_root)
     sequence = ((payload.get("workflow") or {}).get("sequence")) or []
-    return any(step in {"atdd", "test_automate", "test_review", "trace", "nfr"} for step in sequence if isinstance(step, str))
+    tea_steps = {"atdd", "test_automate", "test_review", "trace", "nfr"}
+    return [step for step in sequence if isinstance(step, str) and step in tea_steps]
+
+
+def _has_explicit_tea_policy(project_root: Path) -> bool:
+    return bool(_explicit_tea_steps(project_root))
 
 
 def _tea_detection_assets_root(project_root: Path) -> str:
@@ -588,12 +598,13 @@ def _tea_project_signals(project_root: Path) -> list[str]:
     return signals
 
 
-def _tea_skill_availability(project_root: Path) -> tuple[list[str], list[str]]:
+def _tea_skill_availability(project_root: Path, required_steps: list[str] | None = None) -> tuple[list[str], list[str]]:
     available: list[str] = []
     missing: list[str] = []
-    for step in ("atdd", "test_automate", "test_review", "trace"):
+    for step in (required_steps or ["atdd", "test_automate", "test_review", "trace"]):
         skill_name = _resolve_tea_skill_name(project_root, step)
         if not skill_name:
+            missing.append(TEA_SKILL_ALIASES[step][0])
             continue
         try:
             skill_dir = resolve_skill_dir(project_root, skill_name)
@@ -609,10 +620,11 @@ def _tea_skill_availability(project_root: Path) -> tuple[list[str], list[str]]:
 
 def _detect_workflow_track(project_root: Path) -> dict[str, Any]:
     signals = _tea_project_signals(project_root)
-    explicit_policy = _has_explicit_tea_policy(project_root)
+    explicit_steps = _explicit_tea_steps(project_root)
+    explicit_policy = bool(explicit_steps)
     assets_root = _tea_detection_assets_root(project_root)
     assets_ok, missing_assets = _tea_assets_complete(project_root, assets_root)
-    available_skills, missing_skills = _tea_skill_availability(project_root)
+    available_skills, missing_skills = _tea_skill_availability(project_root, explicit_steps or None)
     reasons: list[str] = []
     prompt = ""
     recommended_track = "standard"
