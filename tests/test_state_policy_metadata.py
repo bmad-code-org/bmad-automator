@@ -480,6 +480,7 @@ class StatePolicyMetadataTests(unittest.TestCase):
         self.assertIn("| 1.1 | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | pending |", text)
 
     def test_build_run_policy_generates_tea_sequence_with_optional_nfr_and_manual_checkpoint(self) -> None:
+        self._install_tea_skills(include_nfr=True)
         stdout = io.StringIO()
         with patch_env(self.project_root), redirect_stdout(stdout):
             code = cmd_build_run_policy(
@@ -540,6 +541,20 @@ class StatePolicyMetadataTests(unittest.TestCase):
 
     def test_detect_workflow_track_uses_bundled_tea_adapter_assets(self) -> None:
         self._install_tea_skills(canonical=True, write_assets=False)
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_detect_workflow_track([])
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["recommendedTrack"], "tea")
+        self.assertTrue(payload["teaCapable"])
+        self.assertEqual(payload["assetsRoot"], "data/tea-story-automator")
+        self.assertEqual(payload["missingAssets"], [])
+
+    def test_detect_workflow_track_falls_back_when_project_tea_assets_are_incomplete(self) -> None:
+        self._install_tea_skills(canonical=True, write_assets=False)
+        incomplete_dir = self.project_root / "_bmad" / "tea" / "story-automator" / "prompts"
+        incomplete_dir.mkdir(parents=True, exist_ok=True)
         stdout = io.StringIO()
         with patch_env(self.project_root), redirect_stdout(stdout):
             code = cmd_detect_workflow_track([])
@@ -647,6 +662,31 @@ class StatePolicyMetadataTests(unittest.TestCase):
         self.assertEqual(payload["policyOverride"]["steps"]["nfr"]["assets"]["skillName"], "bmad-testarch-nfr")
         self.assertEqual(payload["policyOverride"]["steps"]["atdd"]["prompt"]["templateFile"], "data/tea-story-automator/prompts/tea_step.md")
         self.assertEqual(payload["policyOverride"]["steps"]["nfr"]["parse"]["schemaFile"], "data/tea-story-automator/parse/tea_step.json")
+
+    def test_build_run_policy_drops_nfr_when_nfr_skill_is_missing(self) -> None:
+        self._install_tea_skills(canonical=True, write_assets=False)
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_build_run_policy(
+                [
+                    "--config-json",
+                    json.dumps(
+                        {
+                            "workflowTrack": "tea",
+                            "selectedOptionalSteps": ["nfr"],
+                        }
+                    ),
+                ]
+            )
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(
+            payload["policyOverride"]["workflow"]["sequence"],
+            ["create", "atdd", "dev", "test_automate", "test_review", "trace", "review"],
+        )
+        self.assertNotIn("nfr", payload["policyOverride"]["steps"])
+        self.assertEqual(payload["selectedOptionalSteps"], [])
+        self.assertTrue(any("TEA NFR skill is not installed" in note for note in payload["notes"]))
 
     def test_state_progress_updates_named_columns_in_tea_table(self) -> None:
         self._install_tea_skills(include_nfr=True)

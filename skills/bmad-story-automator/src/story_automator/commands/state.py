@@ -250,13 +250,20 @@ def _tea_assets_root(project_root: Path, config: dict[str, Any]) -> str:
     configured = str(config.get("teaAssetsRoot") or "").strip()
     if configured:
         return configured.rstrip("/")
-    project_assets = project_root / "_bmad" / "tea" / "story-automator"
-    if project_assets.is_dir():
-        return "_bmad/tea/story-automator"
-    wrapper_assets = project_root / "docs" / "plans" / "tea-story-automator" / "assets"
-    if wrapper_assets.is_dir():
-        return "docs/plans/tea-story-automator/assets"
-    return "data/tea-story-automator"
+    return _tea_detected_assets_root(project_root)
+
+
+def _tea_asset_root_candidates(project_root: Path) -> list[str]:
+    candidates = [
+        "_bmad/tea/story-automator",
+        "docs/plans/tea-story-automator/assets",
+        "data/tea-story-automator",
+    ]
+    unique: list[str] = []
+    for candidate in candidates:
+        if candidate not in unique:
+            unique.append(candidate)
+    return unique
 
 
 def _tea_assets_base_path(project_root: Path, assets_root: str) -> Path | None:
@@ -275,6 +282,31 @@ def _tea_assets_base_path(project_root: Path, assets_root: str) -> Path | None:
         if candidate.exists():
             return candidate
     return candidates[0] if candidates else None
+
+
+def _tea_assets_complete_for_base(base: Path | None) -> bool:
+    if base is None or not base.exists():
+        return False
+    if (base / "prompts" / "tea_step.md").is_file() and (base / "parse" / "tea_step.json").is_file():
+        return True
+    required = [
+        base / "prompts" / "atdd.md",
+        base / "prompts" / "test_automate.md",
+        base / "prompts" / "test_review.md",
+        base / "prompts" / "trace.md",
+        base / "parse" / "atdd.json",
+        base / "parse" / "test_automate.json",
+        base / "parse" / "test_review.json",
+        base / "parse" / "trace.json",
+    ]
+    return all(path.is_file() for path in required)
+
+
+def _tea_detected_assets_root(project_root: Path) -> str:
+    for assets_root in _tea_asset_root_candidates(project_root):
+        if _tea_assets_complete_for_base(_tea_assets_base_path(project_root, assets_root)):
+            return assets_root
+    return "data/tea-story-automator"
 
 
 def _tea_contract_files(project_root: Path, assets_root: str, step: str) -> tuple[str, str]:
@@ -299,6 +331,18 @@ def _resolve_tea_skill_name(project_root: Path, step: str) -> str:
         if file_exists(str(skill_dir / "SKILL.md")):
             return skill_name
     return candidates[0] if candidates else ""
+
+
+def _tea_skill_installed(project_root: Path, step: str) -> bool:
+    candidates = TEA_SKILL_ALIASES.get(step, ())
+    for skill_name in candidates:
+        try:
+            skill_dir = resolve_skill_dir(project_root, skill_name)
+        except ValueError:
+            continue
+        if file_exists(str(skill_dir / "SKILL.md")):
+            return True
+    return False
 
 
 def _tea_step_contracts(project_root: Path, assets_root: str, *, include_nfr: bool) -> dict[str, Any]:
@@ -418,6 +462,10 @@ def _build_run_policy(project_root: Path, config: dict[str, Any]) -> dict[str, A
     if track == "tea":
         assets_root = _tea_assets_root(project_root, config)
         include_nfr = "nfr" in selected
+        if include_nfr and not _tea_skill_installed(project_root, "nfr"):
+            notes.append("nfr was requested on the TEA track, but the TEA NFR skill is not installed, so it was ignored.")
+            include_nfr = False
+            selected.discard("nfr")
         include_retro = "retro" in selected
         if "validate-create-story" in selected:
             notes.append("validate-create-story remains an advisory pre-dev quality check and is not yet automated by story-automator.")
@@ -501,13 +549,7 @@ def _has_explicit_tea_policy(project_root: Path) -> bool:
 
 
 def _tea_detection_assets_root(project_root: Path) -> str:
-    project_assets = project_root / "_bmad" / "tea" / "story-automator"
-    if project_assets.is_dir():
-        return "_bmad/tea/story-automator"
-    wrapper_assets = project_root / "docs" / "plans" / "tea-story-automator" / "assets"
-    if wrapper_assets.is_dir():
-        return "docs/plans/tea-story-automator/assets"
-    return "data/tea-story-automator"
+    return _tea_detected_assets_root(project_root)
 
 
 def _tea_assets_complete(project_root: Path, assets_root: str) -> tuple[bool, list[str]]:
@@ -516,7 +558,7 @@ def _tea_assets_complete(project_root: Path, assets_root: str) -> tuple[bool, li
     base = _tea_assets_base_path(project_root, assets_root)
     if base is None or not base.exists():
         return False, ["missing TEA story-automator assets root"]
-    if (base / "prompts" / "tea_step.md").is_file() and (base / "parse" / "tea_step.json").is_file():
+    if _tea_assets_complete_for_base(base):
         return True, []
     required = [
         base / "prompts" / "atdd.md",
@@ -529,7 +571,7 @@ def _tea_assets_complete(project_root: Path, assets_root: str) -> tuple[bool, li
         base / "parse" / "trace.json",
     ]
     missing = [str(path) for path in required if not path.is_file()]
-    return not missing, missing
+    return False, missing
 
 
 def _tea_project_signals(project_root: Path) -> list[str]:
