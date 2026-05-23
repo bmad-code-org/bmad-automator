@@ -519,6 +519,25 @@ class StatePolicyMetadataTests(unittest.TestCase):
         self.assertTrue(payload["teaCapable"])
         self.assertIn("Detected TEA support for this project", payload["prompt"])
 
+    def test_detect_workflow_track_accepts_canonical_tea_skill_names(self) -> None:
+        self._install_tea_skills(canonical=True)
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_detect_workflow_track([])
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["recommendedTrack"], "tea")
+        self.assertTrue(payload["teaCapable"])
+        self.assertEqual(
+            payload["availableSkills"],
+            [
+                "bmad-testarch-atdd",
+                "bmad-testarch-automate",
+                "bmad-testarch-test-review",
+                "bmad-testarch-trace",
+            ],
+        )
+
     def test_detect_workflow_track_stays_standard_when_skills_are_missing(self) -> None:
         _write_tea_assets(self.project_root)
         stdout = io.StringIO()
@@ -591,6 +610,29 @@ class StatePolicyMetadataTests(unittest.TestCase):
         self.assertIn("**TEA Configuration:**", text)
         self.assertIn("- Mandatory TEA Core: atdd, test_automate, test_review, trace", text)
         self.assertIn("| Story | create-story | atdd | dev-story | test-automate | test-review | nfr | trace | code-review | git-commit | Status |", text)
+
+    def test_build_run_policy_uses_canonical_tea_skill_names_when_installed(self) -> None:
+        self._install_tea_skills(include_nfr=True, canonical=True)
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_build_run_policy(
+                [
+                    "--config-json",
+                    json.dumps(
+                        {
+                            "workflowTrack": "tea",
+                            "selectedOptionalSteps": ["nfr"],
+                        }
+                    ),
+                ]
+            )
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["policyOverride"]["steps"]["atdd"]["assets"]["skillName"], "bmad-testarch-atdd")
+        self.assertEqual(payload["policyOverride"]["steps"]["test_automate"]["assets"]["skillName"], "bmad-testarch-automate")
+        self.assertEqual(payload["policyOverride"]["steps"]["test_review"]["assets"]["skillName"], "bmad-testarch-test-review")
+        self.assertEqual(payload["policyOverride"]["steps"]["trace"]["assets"]["skillName"], "bmad-testarch-trace")
+        self.assertEqual(payload["policyOverride"]["steps"]["nfr"]["assets"]["skillName"], "bmad-testarch-nfr")
 
     def test_state_progress_updates_named_columns_in_tea_table(self) -> None:
         self._install_tea_skills(include_nfr=True)
@@ -738,16 +780,17 @@ class StatePolicyMetadataTests(unittest.TestCase):
         (self.project_root / ".claude" / "skills" / "bmad-dev-story" / "checklist.md").write_text("# checklist\n", encoding="utf-8")
         (self.project_root / ".claude" / "skills" / "bmad-qa-generate-e2e-tests" / "checklist.md").write_text("# checklist\n", encoding="utf-8")
 
-    def _install_tea_skills(self, *, include_nfr: bool = False) -> None:
+    def _install_tea_skills(self, *, include_nfr: bool = False, canonical: bool = False) -> None:
         _write_tea_assets(self.project_root)
+        prefix = "bmad-testarch" if canonical else "bmad-tea-testarch"
         names = [
-            "bmad-tea-testarch-atdd",
-            "bmad-tea-testarch-automate",
-            "bmad-tea-testarch-test-review",
-            "bmad-tea-testarch-trace",
+            f"{prefix}-atdd",
+            f"{prefix}-automate",
+            f"{prefix}-test-review",
+            f"{prefix}-trace",
         ]
         if include_nfr:
-            names.append("bmad-tea-testarch-nfr")
+            names.append(f"{prefix}-nfr")
         for name in names:
             skill_dir = self.project_root / ".claude" / "skills" / name
             skill_dir.mkdir(parents=True, exist_ok=True)

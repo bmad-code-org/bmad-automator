@@ -12,12 +12,13 @@ from ..core.utils import count_matches, ensure_dir, file_exists, get_project_roo
 
 
 STANDARD_SEQUENCE = ["create", "dev", "auto", "review", "retro"]
-TEA_REQUIRED_SKILLS = (
-    "bmad-tea-testarch-atdd",
-    "bmad-tea-testarch-automate",
-    "bmad-tea-testarch-test-review",
-    "bmad-tea-testarch-trace",
-)
+TEA_SKILL_ALIASES = {
+    "atdd": ("bmad-testarch-atdd", "bmad-tea-testarch-atdd"),
+    "test_automate": ("bmad-testarch-automate", "bmad-tea-testarch-automate"),
+    "test_review": ("bmad-testarch-test-review", "bmad-tea-testarch-test-review"),
+    "trace": ("bmad-testarch-trace", "bmad-tea-testarch-trace"),
+    "nfr": ("bmad-testarch-nfr", "bmad-tea-testarch-nfr"),
+}
 
 STEP_DISPLAY_NAMES = {
     "create": "create-story",
@@ -255,13 +256,25 @@ def _tea_assets_root(project_root: Path, config: dict[str, Any]) -> str:
     return "_bmad/tea/story-automator"
 
 
-def _tea_step_contracts(assets_root: str, *, include_nfr: bool) -> dict[str, Any]:
+def _resolve_tea_skill_name(project_root: Path, step: str) -> str:
+    candidates = TEA_SKILL_ALIASES.get(step, ())
+    for skill_name in candidates:
+        try:
+            skill_dir = resolve_skill_dir(project_root, skill_name)
+        except ValueError:
+            continue
+        if file_exists(str(skill_dir / "SKILL.md")):
+            return skill_name
+    return candidates[0] if candidates else ""
+
+
+def _tea_step_contracts(project_root: Path, assets_root: str, *, include_nfr: bool) -> dict[str, Any]:
     root = assets_root.rstrip("/")
     steps: dict[str, Any] = {
         "atdd": {
             "label": "atdd",
             "assets": {
-                "skillName": "bmad-tea-testarch-atdd",
+                "skillName": _resolve_tea_skill_name(project_root, "atdd"),
                 "workflowCandidates": ["workflow.md", "workflow.yaml"],
                 "instructionsCandidates": [],
                 "checklistCandidates": ["checklist.md"],
@@ -275,7 +288,7 @@ def _tea_step_contracts(assets_root: str, *, include_nfr: bool) -> dict[str, Any
         "test_automate": {
             "label": "test-automate",
             "assets": {
-                "skillName": "bmad-tea-testarch-automate",
+                "skillName": _resolve_tea_skill_name(project_root, "test_automate"),
                 "workflowCandidates": ["workflow.md", "workflow.yaml"],
                 "instructionsCandidates": [],
                 "checklistCandidates": ["checklist.md"],
@@ -289,7 +302,7 @@ def _tea_step_contracts(assets_root: str, *, include_nfr: bool) -> dict[str, Any
         "test_review": {
             "label": "test-review",
             "assets": {
-                "skillName": "bmad-tea-testarch-test-review",
+                "skillName": _resolve_tea_skill_name(project_root, "test_review"),
                 "workflowCandidates": ["workflow.md", "workflow.yaml"],
                 "instructionsCandidates": [],
                 "checklistCandidates": ["checklist.md"],
@@ -303,7 +316,7 @@ def _tea_step_contracts(assets_root: str, *, include_nfr: bool) -> dict[str, Any
         "trace": {
             "label": "trace",
             "assets": {
-                "skillName": "bmad-tea-testarch-trace",
+                "skillName": _resolve_tea_skill_name(project_root, "trace"),
                 "workflowCandidates": ["workflow.md", "workflow.yaml"],
                 "instructionsCandidates": [],
                 "checklistCandidates": ["checklist.md"],
@@ -319,7 +332,7 @@ def _tea_step_contracts(assets_root: str, *, include_nfr: bool) -> dict[str, Any
         steps["nfr"] = {
             "label": "nfr",
             "assets": {
-                "skillName": "bmad-tea-testarch-nfr",
+                "skillName": _resolve_tea_skill_name(project_root, "nfr"),
                 "workflowCandidates": ["workflow.md", "workflow.yaml"],
                 "instructionsCandidates": [],
                 "checklistCandidates": ["checklist.md"],
@@ -380,7 +393,7 @@ def _build_run_policy(project_root: Path, config: dict[str, Any]) -> dict[str, A
             sequence.append("retro")
         policy_override = {
             "workflow": {"sequence": sequence},
-            "steps": _tea_step_contracts(assets_root, include_nfr=include_nfr),
+            "steps": _tea_step_contracts(project_root, assets_root, include_nfr=include_nfr),
         }
         selected = {"nfr" if include_nfr else "", "retro" if include_retro else ""}
         selected.discard("")
@@ -495,16 +508,19 @@ def _tea_project_signals(project_root: Path) -> list[str]:
 def _tea_skill_availability(project_root: Path) -> tuple[list[str], list[str]]:
     available: list[str] = []
     missing: list[str] = []
-    for skill_name in TEA_REQUIRED_SKILLS:
+    for step in ("atdd", "test_automate", "test_review", "trace"):
+        skill_name = _resolve_tea_skill_name(project_root, step)
+        if not skill_name:
+            continue
         try:
             skill_dir = resolve_skill_dir(project_root, skill_name)
         except ValueError:
-            missing.append(skill_name)
+            missing.append(TEA_SKILL_ALIASES[step][0])
             continue
         if file_exists(str(skill_dir / "SKILL.md")):
             available.append(skill_name)
         else:
-            missing.append(skill_name)
+            missing.append(TEA_SKILL_ALIASES[step][0])
     return available, missing
 
 
