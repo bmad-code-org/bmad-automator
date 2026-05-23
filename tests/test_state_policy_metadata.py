@@ -538,6 +538,18 @@ class StatePolicyMetadataTests(unittest.TestCase):
             ],
         )
 
+    def test_detect_workflow_track_uses_bundled_tea_adapter_assets(self) -> None:
+        self._install_tea_skills(canonical=True, write_assets=False)
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_detect_workflow_track([])
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["recommendedTrack"], "tea")
+        self.assertTrue(payload["teaCapable"])
+        self.assertEqual(payload["assetsRoot"], "data/tea-story-automator")
+        self.assertEqual(payload["missingAssets"], [])
+
     def test_detect_workflow_track_stays_standard_when_skills_are_missing(self) -> None:
         _write_tea_assets(self.project_root)
         stdout = io.StringIO()
@@ -612,7 +624,7 @@ class StatePolicyMetadataTests(unittest.TestCase):
         self.assertIn("| Story | create-story | atdd | dev-story | test-automate | test-review | nfr | trace | code-review | git-commit | Status |", text)
 
     def test_build_run_policy_uses_canonical_tea_skill_names_when_installed(self) -> None:
-        self._install_tea_skills(include_nfr=True, canonical=True)
+        self._install_tea_skills(include_nfr=True, canonical=True, write_assets=False)
         stdout = io.StringIO()
         with patch_env(self.project_root), redirect_stdout(stdout):
             code = cmd_build_run_policy(
@@ -633,6 +645,8 @@ class StatePolicyMetadataTests(unittest.TestCase):
         self.assertEqual(payload["policyOverride"]["steps"]["test_review"]["assets"]["skillName"], "bmad-testarch-test-review")
         self.assertEqual(payload["policyOverride"]["steps"]["trace"]["assets"]["skillName"], "bmad-testarch-trace")
         self.assertEqual(payload["policyOverride"]["steps"]["nfr"]["assets"]["skillName"], "bmad-testarch-nfr")
+        self.assertEqual(payload["policyOverride"]["steps"]["atdd"]["prompt"]["templateFile"], "data/tea-story-automator/prompts/tea_step.md")
+        self.assertEqual(payload["policyOverride"]["steps"]["nfr"]["parse"]["schemaFile"], "data/tea-story-automator/parse/tea_step.json")
 
     def test_state_progress_updates_named_columns_in_tea_table(self) -> None:
         self._install_tea_skills(include_nfr=True)
@@ -780,8 +794,11 @@ class StatePolicyMetadataTests(unittest.TestCase):
         (self.project_root / ".claude" / "skills" / "bmad-dev-story" / "checklist.md").write_text("# checklist\n", encoding="utf-8")
         (self.project_root / ".claude" / "skills" / "bmad-qa-generate-e2e-tests" / "checklist.md").write_text("# checklist\n", encoding="utf-8")
 
-    def _install_tea_skills(self, *, include_nfr: bool = False, canonical: bool = False) -> None:
-        _write_tea_assets(self.project_root)
+    def _install_tea_skills(self, *, include_nfr: bool = False, canonical: bool = False, write_assets: bool = True) -> None:
+        if write_assets:
+            _write_tea_assets(self.project_root)
+        else:
+            (self.project_root / "_bmad" / "tea" / "workflows" / "testarch").mkdir(parents=True, exist_ok=True)
         prefix = "bmad-testarch" if canonical else "bmad-tea-testarch"
         names = [
             f"{prefix}-atdd",

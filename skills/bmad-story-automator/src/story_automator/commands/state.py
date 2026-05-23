@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from ..core.frontmatter import extract_frontmatter, parse_simple_frontmatter
-from ..core.runtime_layout import resolve_skill_dir
+from ..core.runtime_layout import bundled_story_skill_root, resolve_skill_dir
 from ..core.runtime_policy import PolicyError, load_policy_for_state, snapshot_effective_policy
 from ..core.utils import count_matches, ensure_dir, file_exists, get_project_root, now_utc, now_utc_z, read_text, write_json
 
@@ -250,10 +250,43 @@ def _tea_assets_root(project_root: Path, config: dict[str, Any]) -> str:
     configured = str(config.get("teaAssetsRoot") or "").strip()
     if configured:
         return configured.rstrip("/")
+    project_assets = project_root / "_bmad" / "tea" / "story-automator"
+    if project_assets.is_dir():
+        return "_bmad/tea/story-automator"
     wrapper_assets = project_root / "docs" / "plans" / "tea-story-automator" / "assets"
     if wrapper_assets.is_dir():
         return "docs/plans/tea-story-automator/assets"
-    return "_bmad/tea/story-automator"
+    return "data/tea-story-automator"
+
+
+def _tea_assets_base_path(project_root: Path, assets_root: str) -> Path | None:
+    raw = Path(assets_root)
+    candidates: list[Path] = []
+    if raw.is_absolute():
+        candidates.append(raw.resolve())
+    else:
+        candidates.append((project_root / raw).resolve())
+        try:
+            bundle_root = bundled_story_skill_root(project_root)
+            candidates.append((bundle_root / raw).resolve())
+        except FileNotFoundError:
+            pass
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0] if candidates else None
+
+
+def _tea_contract_files(project_root: Path, assets_root: str, step: str) -> tuple[str, str]:
+    base = _tea_assets_base_path(project_root, assets_root)
+    root = assets_root.rstrip("/")
+    generic_prompt = f"{root}/prompts/tea_step.md"
+    generic_schema = f"{root}/parse/tea_step.json"
+    if base is None:
+        return generic_prompt, generic_schema
+    if (base / "prompts" / f"{step}.md").is_file() and (base / "parse" / f"{step}.json").is_file():
+        return f"{root}/prompts/{step}.md", f"{root}/parse/{step}.json"
+    return generic_prompt, generic_schema
 
 
 def _resolve_tea_skill_name(project_root: Path, step: str) -> str:
@@ -270,6 +303,10 @@ def _resolve_tea_skill_name(project_root: Path, step: str) -> str:
 
 def _tea_step_contracts(project_root: Path, assets_root: str, *, include_nfr: bool) -> dict[str, Any]:
     root = assets_root.rstrip("/")
+    atdd_prompt, atdd_schema = _tea_contract_files(project_root, assets_root, "atdd")
+    automate_prompt, automate_schema = _tea_contract_files(project_root, assets_root, "test_automate")
+    review_prompt, review_schema = _tea_contract_files(project_root, assets_root, "test_review")
+    trace_prompt, trace_schema = _tea_contract_files(project_root, assets_root, "trace")
     steps: dict[str, Any] = {
         "atdd": {
             "label": "atdd",
@@ -281,8 +318,8 @@ def _tea_step_contracts(project_root: Path, assets_root: str, *, include_nfr: bo
                 "templateCandidates": [],
                 "required": ["skill"],
             },
-            "prompt": {"templateFile": f"{root}/prompts/atdd.md", "interactionMode": "autonomous"},
-            "parse": {"schemaFile": f"{root}/parse/atdd.json"},
+            "prompt": {"templateFile": atdd_prompt, "interactionMode": "autonomous"},
+            "parse": {"schemaFile": atdd_schema},
             "success": {"verifier": "session_exit"},
         },
         "test_automate": {
@@ -295,8 +332,8 @@ def _tea_step_contracts(project_root: Path, assets_root: str, *, include_nfr: bo
                 "templateCandidates": [],
                 "required": ["skill"],
             },
-            "prompt": {"templateFile": f"{root}/prompts/test_automate.md", "interactionMode": "autonomous"},
-            "parse": {"schemaFile": f"{root}/parse/test_automate.json"},
+            "prompt": {"templateFile": automate_prompt, "interactionMode": "autonomous"},
+            "parse": {"schemaFile": automate_schema},
             "success": {"verifier": "session_exit"},
         },
         "test_review": {
@@ -309,8 +346,8 @@ def _tea_step_contracts(project_root: Path, assets_root: str, *, include_nfr: bo
                 "templateCandidates": [],
                 "required": ["skill"],
             },
-            "prompt": {"templateFile": f"{root}/prompts/test_review.md", "interactionMode": "autonomous"},
-            "parse": {"schemaFile": f"{root}/parse/test_review.json"},
+            "prompt": {"templateFile": review_prompt, "interactionMode": "autonomous"},
+            "parse": {"schemaFile": review_schema},
             "success": {"verifier": "session_exit"},
         },
         "trace": {
@@ -323,12 +360,13 @@ def _tea_step_contracts(project_root: Path, assets_root: str, *, include_nfr: bo
                 "templateCandidates": [],
                 "required": ["skill"],
             },
-            "prompt": {"templateFile": f"{root}/prompts/trace.md", "interactionMode": "autonomous"},
-            "parse": {"schemaFile": f"{root}/parse/trace.json"},
+            "prompt": {"templateFile": trace_prompt, "interactionMode": "autonomous"},
+            "parse": {"schemaFile": trace_schema},
             "success": {"verifier": "session_exit"},
         },
     }
     if include_nfr:
+        nfr_prompt, nfr_schema = _tea_contract_files(project_root, assets_root, "nfr")
         steps["nfr"] = {
             "label": "nfr",
             "assets": {
@@ -339,8 +377,8 @@ def _tea_step_contracts(project_root: Path, assets_root: str, *, include_nfr: bo
                 "templateCandidates": [],
                 "required": ["skill"],
             },
-            "prompt": {"templateFile": f"{root}/prompts/nfr.md", "interactionMode": "autonomous"},
-            "parse": {"schemaFile": f"{root}/parse/nfr.json"},
+            "prompt": {"templateFile": nfr_prompt, "interactionMode": "autonomous"},
+            "parse": {"schemaFile": nfr_schema},
             "success": {"verifier": "session_exit"},
         }
     return steps
@@ -463,31 +501,34 @@ def _has_explicit_tea_policy(project_root: Path) -> bool:
 
 
 def _tea_detection_assets_root(project_root: Path) -> str:
-    wrapper_assets = project_root / "docs" / "plans" / "tea-story-automator" / "assets"
-    if wrapper_assets.is_dir():
-        return "docs/plans/tea-story-automator/assets"
     project_assets = project_root / "_bmad" / "tea" / "story-automator"
     if project_assets.is_dir():
         return "_bmad/tea/story-automator"
-    return ""
+    wrapper_assets = project_root / "docs" / "plans" / "tea-story-automator" / "assets"
+    if wrapper_assets.is_dir():
+        return "docs/plans/tea-story-automator/assets"
+    return "data/tea-story-automator"
 
 
 def _tea_assets_complete(project_root: Path, assets_root: str) -> tuple[bool, list[str]]:
     if not assets_root:
         return False, ["missing TEA story-automator assets root"]
-    prompt_dir = project_root / assets_root / "prompts"
-    parse_dir = project_root / assets_root / "parse"
+    base = _tea_assets_base_path(project_root, assets_root)
+    if base is None or not base.exists():
+        return False, ["missing TEA story-automator assets root"]
+    if (base / "prompts" / "tea_step.md").is_file() and (base / "parse" / "tea_step.json").is_file():
+        return True, []
     required = [
-        prompt_dir / "atdd.md",
-        prompt_dir / "test_automate.md",
-        prompt_dir / "test_review.md",
-        prompt_dir / "trace.md",
-        parse_dir / "atdd.json",
-        parse_dir / "test_automate.json",
-        parse_dir / "test_review.json",
-        parse_dir / "trace.json",
+        base / "prompts" / "atdd.md",
+        base / "prompts" / "test_automate.md",
+        base / "prompts" / "test_review.md",
+        base / "prompts" / "trace.md",
+        base / "parse" / "atdd.json",
+        base / "parse" / "test_automate.json",
+        base / "parse" / "test_review.json",
+        base / "parse" / "trace.json",
     ]
-    missing = [str(path.relative_to(project_root)) for path in required if not path.is_file()]
+    missing = [str(path) for path in required if not path.is_file()]
     return not missing, missing
 
 
