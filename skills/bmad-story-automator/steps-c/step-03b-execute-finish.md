@@ -27,8 +27,10 @@ ok=$(echo "$commit" | jq -r '.ok')
 - If `ok == true`:
   ```bash
   # Update Story Progress: mark git-commit done
-  tmp_state=$(mktemp)
-  sed "s/^| ${story_id} |.*$/| ${story_id} | done | done | done | done | done | in-progress |/" "{outputFile}" > "$tmp_state" && mv "$tmp_state" "{outputFile}"
+  "{scriptsDir}" orchestrator-helper state-progress "{outputFile}" \
+    --story "${story_id}" \
+    --set git-commit=done \
+    --set status=in-progress
   ```
   → proceed to F
 - If `ok == false` → log warning and escalate
@@ -60,8 +62,9 @@ Display: "**✅ Story {N} complete.**"
 echo "- **[$(date -u +%Y-%m-%dT%H:%M:%SZ)]** Story {story_id}: ✅ complete (commit + sprint-status verified)" >> "{outputFile}"
 
 # Update Story Progress: mark story done
-tmp_state=$(mktemp)
-sed "s/^| ${story_id} |.*$/| ${story_id} | done | done | done | done | done | done |/" "{outputFile}" > "$tmp_state" && mv "$tmp_state" "{outputFile}"
+"{scriptsDir}" orchestrator-helper state-progress "{outputFile}" \
+  --story "${story_id}" \
+  --set status=done
 ```
 Display: `[story {N}/{total}] finalize -> done`
 

@@ -137,7 +137,7 @@ Active sessions: {count or 'None'}
   - INITIALIZING → `{preflightConfigStep}`
   - IN_PROGRESS / PAUSED → route by `currentStep`:
     - `step-03-execute` or `create` or `atdd` or `dev` → `{executeStep}`
-    - `step-03a-execute-review` or `auto` or `test_automate` or `test_review` or `trace` or `review` → `{executeReviewStep}`
+    - `step-03a-execute-review` or `auto` or `test_automate` or `test_review` or `nfr` or `trace` or `review` → `{executeReviewStep}`
     - `step-03b-execute-finish` or `commit` or `retro` → `{executeFinishStep}`
     - `step-03c-execute-complete` → `{executeCompleteStep}`
     - (default) → `{executeStep}`

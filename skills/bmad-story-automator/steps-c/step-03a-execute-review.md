@@ -57,16 +57,20 @@ result=$("$scripts" monitor-session "$session" --json --agent "$current_agent")
 - SUCCESS:
   ```bash
   # Update Story Progress: mark automate done
-  tmp_state=$(mktemp)
-  sed "s/^| ${story_id} |.*$/| ${story_id} | done | done | done | - | - | in-progress |/" "{outputFile}" > "$tmp_state" && mv "$tmp_state" "{outputFile}"
+  "$scripts" orchestrator-helper state-progress "{outputFile}" \
+    --story "${story_id}" \
+    --set auto=done \
+    --set status=in-progress
   ```
   Display: `[story {N}/{total}] automate -> done`
   → proceed to D
 - FAILURE → retry up to 3 attempts (non-blocking, so fewer retries), then log warning:
   ```bash
   # Update Story Progress: mark automate skipped
-  tmp_state=$(mktemp)
-  sed "s/^| ${story_id} |.*$/| ${story_id} | done | done | skip | - | - | in-progress |/" "{outputFile}" > "$tmp_state" && mv "$tmp_state" "{outputFile}"
+  "$scripts" orchestrator-helper state-progress "{outputFile}" \
+    --story "${story_id}" \
+    --set auto=skip \
+    --set status=in-progress
   ```
   Display: `[story {N}/{total}] automate -> skip (non-blocking)`
   → proceed to D
@@ -89,6 +93,7 @@ parsed=$("$scripts" orchestrator-helper parse-output "$(printf '%s' "$result" | 
 - If `next_action == "proceed"` → continue to the next policy-defined step
 - If `next_action == "retry"` or the session crashes → apply the retry/fallback pattern
 - TEA v1 success for these steps means session execution completed successfully
+- When a TEA quality step completes, update only that named progress column via `state-progress` rather than rewriting the whole row
 
 ### D. Code Review Loop
 
@@ -125,8 +130,10 @@ Key points:
 - **States:** `completed` (verified):
   ```bash
   # Update Story Progress: mark code-review done
-  tmp_state=$(mktemp)
-  sed "s/^| ${story_id} |.*$/| ${story_id} | done | done | done | done | - | in-progress |/" "{outputFile}" > "$tmp_state" && mv "$tmp_state" "{outputFile}"
+  "$scripts" orchestrator-helper state-progress "{outputFile}" \
+    --story "${story_id}" \
+    --set review=done \
+    --set status=in-progress
   ```
   Display: `[story {N}/{total}] review -> done`
   → E | `incomplete` → count as failed attempt, retry until maxCycles, then CRITICAL escalate (Trigger #8)

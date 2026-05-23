@@ -62,6 +62,7 @@ def cmd_orchestrator_helper(args: list[str]) -> int:
         "state-latest-incomplete": _state_latest_incomplete,
         "state-summary": _state_summary,
         "state-update": _state_update,
+        "state-progress": _state_progress,
         "escalate": _escalate,
         "commit-ready": _commit_ready,
         "normalize-key": _normalize_key,
@@ -100,6 +101,7 @@ def _usage(code: int) -> int:
     print("  state-latest-incomplete <folder>", file=target)
     print("  state-summary <file>", file=target)
     print("  state-update <file> --set k=v", file=target)
+    print("  state-progress <file> --story ID --set step=value", file=target)
     print("  escalate <trigger> <context>", file=target)
     print("  commit-ready <story_id>", file=target)
     print("  normalize-key <input> [--to id|key|prefix|json]", file=target)
@@ -473,6 +475,103 @@ def _verify_step(args: list[str]) -> int:
         exit_code = 1
     print_json(payload)
     return exit_code
+
+
+def _normalize_progress_key(value: str) -> str:
+    key = str(value or "").strip().lower().replace("_", "-")
+    aliases = {
+        "create": "create-story",
+        "dev": "dev-story",
+        "auto": "automate",
+        "review": "code-review",
+        "test-automate": "test-automate",
+        "test-review": "test-review",
+        "git_commit": "git-commit",
+        "git-commit": "git-commit",
+        "status": "status",
+        "story": "story",
+        "create-story": "create-story",
+        "dev-story": "dev-story",
+        "automate": "automate",
+        "code-review": "code-review",
+        "atdd": "atdd",
+        "nfr": "nfr",
+        "trace": "trace",
+    }
+    return aliases.get(key, key)
+
+
+def _parse_markdown_cells(line: str) -> list[str]:
+    parts = [part.strip() for part in line.split("|")]
+    return [part for part in parts[1:-1]]
+
+
+def _render_markdown_row(cells: list[str]) -> str:
+    return "| " + " | ".join(cells) + " |"
+
+
+def _state_progress(args: list[str]) -> int:
+    if not args or not file_exists(args[0]):
+        print_json({"ok": False, "error": "file_not_found"})
+        return 1
+    state_file = args[0]
+    story_id = ""
+    updates: dict[str, str] = {}
+    idx = 1
+    while idx < len(args):
+        if args[idx] == "--story" and idx + 1 < len(args):
+            story_id = args[idx + 1]
+            idx += 2
+            continue
+        if args[idx] == "--set" and idx + 1 < len(args):
+            key, value = args[idx + 1].split("=", 1)
+            updates[_normalize_progress_key(key)] = value
+            idx += 2
+            continue
+        idx += 1
+    if not story_id or not updates:
+        print_json({"ok": False, "error": "missing_story_or_updates"})
+        return 1
+
+    lines = read_text(state_file).splitlines()
+    header_idx = -1
+    story_idx = -1
+    headers: list[str] = []
+    story_cells: list[str] = []
+    for i, line in enumerate(lines):
+        if line.startswith("| Story "):
+            header_idx = i
+            headers = [_normalize_progress_key(cell) for cell in _parse_markdown_cells(line)]
+            continue
+        if header_idx >= 0 and line.startswith(f"| {story_id} |"):
+            story_idx = i
+            story_cells = _parse_markdown_cells(line)
+            break
+    if header_idx < 0 or not headers:
+        print_json({"ok": False, "error": "progress_table_not_found"})
+        return 1
+    if story_idx < 0 or not story_cells:
+        print_json({"ok": False, "error": "story_row_not_found"})
+        return 1
+    if len(story_cells) != len(headers):
+        print_json({"ok": False, "error": "progress_row_misaligned"})
+        return 1
+
+    header_map = {name: pos for pos, name in enumerate(headers)}
+    applied: list[str] = []
+    for key, value in updates.items():
+        pos = header_map.get(key)
+        if pos is None:
+            continue
+        story_cells[pos] = value
+        applied.append(key)
+    if not applied:
+        print_json({"ok": False, "error": "progress_columns_not_found"})
+        return 1
+    lines[story_idx] = _render_markdown_row(story_cells)
+    Path(state_file).write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print_json({"ok": True, "story": story_id, "updated": applied})
+    return 0
 
 
 def _parse_context_int(context: str, key: str) -> int:

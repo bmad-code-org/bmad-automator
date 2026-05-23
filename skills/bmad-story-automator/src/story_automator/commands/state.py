@@ -520,9 +520,11 @@ def _detect_workflow_track(project_root: Path) -> dict[str, Any]:
     requires_confirmation = False
     tea_capable = bool(signals) and assets_ok and not missing_skills
 
-    if explicit_policy:
+    if explicit_policy and assets_ok and not missing_skills:
         recommended_track = "tea"
         reasons.append("Project already defines an explicit TEA story-automator policy override.")
+    elif explicit_policy:
+        reasons.append("Project defines an explicit TEA story-automator policy override, but required TEA skills or assets are missing.")
     elif tea_capable:
         recommended_track = "tea"
         requires_confirmation = True
@@ -544,7 +546,7 @@ def _detect_workflow_track(project_root: Path) -> dict[str, Any]:
         "requiresConfirmation": requires_confirmation,
         "prompt": prompt,
         "teaDetected": explicit_policy or bool(signals),
-        "teaCapable": explicit_policy or tea_capable,
+        "teaCapable": (assets_ok and not missing_skills) if explicit_policy else tea_capable,
         "explicitTeaPolicy": explicit_policy,
         "signals": signals,
         "availableSkills": available_skills,

@@ -552,6 +552,29 @@ class StatePolicyMetadataTests(unittest.TestCase):
         self.assertFalse(payload["requiresConfirmation"])
         self.assertTrue(payload["explicitTeaPolicy"])
 
+    def test_detect_workflow_track_rejects_explicit_tea_policy_when_skills_missing(self) -> None:
+        _write_tea_assets(self.project_root)
+        override_dir = self.project_root / "_bmad" / "bmm"
+        override_dir.mkdir(parents=True, exist_ok=True)
+        (override_dir / "story-automator.policy.json").write_text(
+            json.dumps(
+                {
+                    "workflow": {"sequence": ["create", "atdd", "dev", "test_automate", "test_review", "trace", "review"]},
+                    "steps": _tea_steps_override(self.project_root),
+                }
+            ),
+            encoding="utf-8",
+        )
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_detect_workflow_track([])
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["recommendedTrack"], "standard")
+        self.assertFalse(payload["teaCapable"])
+        self.assertTrue(payload["explicitTeaPolicy"])
+        self.assertTrue(any("required TEA skills or assets are missing" in note for note in payload["reasons"]))
+
     def test_build_state_doc_snapshots_generated_tea_policy_and_renders_nfr_column(self) -> None:
         self._install_tea_skills(include_nfr=True)
         state_file = self._build_state(
@@ -568,6 +591,36 @@ class StatePolicyMetadataTests(unittest.TestCase):
         self.assertIn("**TEA Configuration:**", text)
         self.assertIn("- Mandatory TEA Core: atdd, test_automate, test_review, trace", text)
         self.assertIn("| Story | create-story | atdd | dev-story | test-automate | test-review | nfr | trace | code-review | git-commit | Status |", text)
+
+    def test_state_progress_updates_named_columns_in_tea_table(self) -> None:
+        self._install_tea_skills(include_nfr=True)
+        state_file = self._build_state(
+            {
+                "workflowTrack": "tea",
+                "selectedOptionalSteps": ["nfr"],
+            }
+        )
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_orchestrator_helper(
+                [
+                    "state-progress",
+                    str(state_file),
+                    "--story",
+                    "1.1",
+                    "--set",
+                    "atdd=done",
+                    "--set",
+                    "nfr=done",
+                    "--set",
+                    "status=in-progress",
+                ]
+            )
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertTrue(payload["ok"])
+        text = state_file.read_text(encoding="utf-8")
+        self.assertIn("| 1.1 | ⏳ | done | ⏳ | ⏳ | ⏳ | done | ⏳ | ⏳ | ⏳ | in-progress |", text)
 
     def test_build_state_doc_keeps_standard_summary_shape_unchanged(self) -> None:
         state_file = self._build_state()

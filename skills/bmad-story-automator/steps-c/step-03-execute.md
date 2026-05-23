@@ -102,12 +102,10 @@ Do not silently switch to TEA because TEA skills are installed. Only follow TEA 
   --set lastUpdated="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "- **[$(date -u +%Y-%m-%dT%H:%M:%SZ)]** Starting story {story_id}" >> "$state_file"
 
-# Initialize Story Progress row
-tmp_state=$(mktemp)
-awk -v row="| {story_id} | - | - | - | - | - | in-progress |" '
-  /^<!-- Progress rows -->$/ { print row }
-  { print }
-' "$state_file" > "$tmp_state" && mv "$tmp_state" "$state_file"
+# Mark the current story row in progress using the rendered table headers
+"$scripts" orchestrator-helper state-progress "$state_file" \
+  --story "{story_id}" \
+  --set status=in-progress
 ```
 
 Display: "**Story {N}/{total}: {title}**"
@@ -149,8 +147,10 @@ validation=$("$scripts" orchestrator-helper verify-step create {story_id} --stat
 - If `validation.verified == true`:
   ```bash
   # Update Story Progress: mark create-story done
-  tmp_state=$(mktemp)
-  sed "s/^| ${story_id} |.*$/| ${story_id} | done | - | - | - | - | in-progress |/" "$state_file" > "$tmp_state" && mv "$tmp_state" "$state_file"
+  "$scripts" orchestrator-helper state-progress "$state_file" \
+    --story "${story_id}" \
+    --set create=done \
+    --set status=in-progress
   ```
   → proceed to B
 - If `validation.verified == false` AND attempts < 5 → retry with next agent (see `{retryStrategy}`)
@@ -205,8 +205,11 @@ reasons=$(echo "$parsed" | jq -c '.reasons // []')
 - If `next_action == "proceed"`:
   ```bash
   # Update Story Progress: mark dev-story done
-  tmp_state=$(mktemp)
-  sed "s/^| ${story_id} |.*$/| ${story_id} | done | done | - | - | - | in-progress |/" "$state_file" > "$tmp_state" && mv "$tmp_state" "$state_file"
+  "$scripts" orchestrator-helper state-progress "$state_file" \
+    --story "${story_id}" \
+    --set create=done \
+    --set dev=done \
+    --set status=in-progress
   ```
   → proceed to C (next step)
 - If `next_action == "retry"` OR `result.final_state == "crashed"`:
