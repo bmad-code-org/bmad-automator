@@ -474,7 +474,7 @@ class StatePolicyMetadataTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        state_file = self._build_state()
+        state_file = self._build_state({"workflowTrack": "tea"})
         text = state_file.read_text(encoding="utf-8")
         self.assertIn("| Story | create-story | atdd | dev-story | test-automate | test-review | trace | code-review | git-commit | Status |", text)
         self.assertIn("| 1.1 | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | pending |", text)
@@ -598,6 +598,28 @@ class StatePolicyMetadataTests(unittest.TestCase):
         self.assertFalse(payload["requiresConfirmation"])
         self.assertTrue(payload["explicitTeaPolicy"])
 
+    def test_detect_workflow_track_rejects_explicit_tea_policy_missing_step_contract(self) -> None:
+        self._install_tea_skills(canonical=True)
+        override_dir = self.project_root / "_bmad" / "bmm"
+        override_dir.mkdir(parents=True, exist_ok=True)
+        (override_dir / "story-automator.policy.json").write_text(
+            json.dumps(
+                {
+                    "workflow": {"sequence": ["create", "atdd", "dev", "review"]},
+                    "steps": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_detect_workflow_track([])
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["recommendedTrack"], "standard")
+        self.assertFalse(payload["teaCapable"])
+        self.assertTrue(any("workflow.sequence references missing step: atdd" in note for note in payload["reasons"]))
+
     def test_detect_workflow_track_rejects_explicit_tea_policy_when_skills_missing(self) -> None:
         _write_tea_assets(self.project_root)
         override_dir = self.project_root / "_bmad" / "bmm"
@@ -675,6 +697,24 @@ class StatePolicyMetadataTests(unittest.TestCase):
             encoding="utf-8",
         )
         state_file = self._build_state({"workflowTrack": "standard"})
+        text = state_file.read_text(encoding="utf-8")
+        self.assertNotIn("**TEA Configuration:**", text)
+        self.assertIn("| Story | create-story | dev-story | automate | code-review | git-commit | Status |", text)
+
+    def test_build_state_doc_legacy_config_stays_standard_despite_explicit_tea_override(self) -> None:
+        self._install_tea_skills(canonical=True)
+        override_dir = self.project_root / "_bmad" / "bmm"
+        override_dir.mkdir(parents=True, exist_ok=True)
+        (override_dir / "story-automator.policy.json").write_text(
+            json.dumps(
+                {
+                    "workflow": {"sequence": ["create", "atdd", "dev", "test_automate", "test_review", "trace", "review"]},
+                    "steps": _tea_steps_override(self.project_root),
+                }
+            ),
+            encoding="utf-8",
+        )
+        state_file = self._build_state()
         text = state_file.read_text(encoding="utf-8")
         self.assertNotIn("**TEA Configuration:**", text)
         self.assertIn("| Story | create-story | dev-story | automate | code-review | git-commit | Status |", text)
@@ -780,7 +820,7 @@ class StatePolicyMetadataTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        state_file = self._build_state()
+        state_file = self._build_state({"workflowTrack": "tea"})
         complexity_file = self.project_root / "complexity.json"
         complexity_file.write_text(
             json.dumps({"stories": [{"storyId": "1.1", "title": "Story 1", "complexity": {"level": "medium"}}]}),

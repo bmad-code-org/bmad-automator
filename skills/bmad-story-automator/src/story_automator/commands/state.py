@@ -7,7 +7,7 @@ from typing import Any
 
 from ..core.frontmatter import extract_frontmatter, parse_simple_frontmatter
 from ..core.runtime_layout import bundled_story_skill_root, resolve_skill_dir
-from ..core.runtime_policy import PolicyError, load_policy_for_state, snapshot_effective_policy
+from ..core.runtime_policy import PolicyError, load_effective_policy, load_policy_for_state, snapshot_effective_policy
 from ..core.utils import count_matches, ensure_dir, file_exists, get_project_root, now_utc, now_utc_z, read_text, write_json
 
 
@@ -444,7 +444,7 @@ def _build_run_policy(project_root: Path, config: dict[str, Any]) -> dict[str, A
     )
     if not has_run_selection:
         return {
-            "policyOverride": {},
+            "policyOverride": {"workflow": {"sequence": list(STANDARD_SEQUENCE)}},
             "workflowTrack": "standard",
             "selectedOptionalSteps": [],
             "manualCheckpoints": [],
@@ -558,6 +558,16 @@ def _has_explicit_tea_policy(project_root: Path) -> bool:
     return bool(_explicit_tea_steps(project_root))
 
 
+def _explicit_tea_policy_valid(project_root: Path) -> tuple[bool, str]:
+    if not _has_explicit_tea_policy(project_root):
+        return False, ""
+    try:
+        load_effective_policy(str(project_root), resolve_assets=True)
+    except (FileNotFoundError, PolicyError, ValueError) as exc:
+        return False, str(exc)
+    return True, ""
+
+
 def _tea_detection_assets_root(project_root: Path) -> str:
     return _tea_detected_assets_root(project_root)
 
@@ -625,17 +635,20 @@ def _detect_workflow_track(project_root: Path) -> dict[str, Any]:
     assets_root = _tea_detection_assets_root(project_root)
     assets_ok, missing_assets = _tea_assets_complete(project_root, assets_root)
     available_skills, missing_skills = _tea_skill_availability(project_root, explicit_steps or None)
+    explicit_policy_valid, explicit_policy_error = _explicit_tea_policy_valid(project_root)
     reasons: list[str] = []
     prompt = ""
     recommended_track = "standard"
     requires_confirmation = False
     tea_capable = bool(signals) and assets_ok and not missing_skills
 
-    if explicit_policy and assets_ok and not missing_skills:
+    if explicit_policy and explicit_policy_valid and assets_ok and not missing_skills:
         recommended_track = "tea"
         reasons.append("Project already defines an explicit TEA story-automator policy override.")
     elif explicit_policy:
         reasons.append("Project defines an explicit TEA story-automator policy override, but required TEA skills or assets are missing.")
+        if explicit_policy_error:
+            reasons.append(explicit_policy_error)
     elif tea_capable:
         recommended_track = "tea"
         requires_confirmation = True
@@ -657,7 +670,7 @@ def _detect_workflow_track(project_root: Path) -> dict[str, Any]:
         "requiresConfirmation": requires_confirmation,
         "prompt": prompt,
         "teaDetected": explicit_policy or bool(signals),
-        "teaCapable": (assets_ok and not missing_skills) if explicit_policy else tea_capable,
+        "teaCapable": (explicit_policy_valid and assets_ok and not missing_skills) if explicit_policy else tea_capable,
         "explicitTeaPolicy": explicit_policy,
         "signals": signals,
         "availableSkills": available_skills,
