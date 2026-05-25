@@ -207,7 +207,6 @@ reasons=$(echo "$parsed" | jq -c '.reasons // []')
   # Update Story Progress: mark dev-story done
   "$scripts" orchestrator-helper state-progress "$state_file" \
     --story "${story_id}" \
-    --set create=done \
     --set dev=done \
     --set status=in-progress
   ```

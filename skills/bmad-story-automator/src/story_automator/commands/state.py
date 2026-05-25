@@ -431,9 +431,12 @@ def _tea_step_contracts(project_root: Path, assets_root: str, *, include_nfr: bo
 def _build_run_policy(project_root: Path, config: dict[str, Any]) -> dict[str, Any]:
     explicit_override = config.get("policyOverride")
     if isinstance(explicit_override, dict):
+        track = str(config.get("workflowTrack") or "standard").strip().lower()
+        if track not in {"standard", "tea"}:
+            track = "standard"
         return {
             "policyOverride": explicit_override,
-            "workflowTrack": str(config.get("workflowTrack") or "standard"),
+            "workflowTrack": track,
             "selectedOptionalSteps": _normalize_string_list(config.get("selectedOptionalSteps")),
             "manualCheckpoints": _normalize_string_list(config.get("manualCheckpoints")),
             "notes": _normalize_string_list(config.get("policyNotes")),
@@ -558,14 +561,18 @@ def _has_explicit_tea_policy(project_root: Path) -> bool:
     return bool(_explicit_tea_steps(project_root))
 
 
-def _explicit_tea_policy_valid(project_root: Path) -> tuple[bool, str]:
+def _explicit_tea_policy_details(project_root: Path) -> tuple[dict[str, Any] | None, str]:
     if not _has_explicit_tea_policy(project_root):
-        return False, ""
+        return None, ""
     try:
-        load_effective_policy(str(project_root), resolve_assets=True)
+        return load_effective_policy(str(project_root), resolve_assets=True), ""
     except (FileNotFoundError, PolicyError, ValueError) as exc:
-        return False, str(exc)
-    return True, ""
+        return None, str(exc)
+
+
+def _explicit_tea_policy_valid(project_root: Path) -> tuple[bool, str]:
+    policy, error = _explicit_tea_policy_details(project_root)
+    return policy is not None, error
 
 
 def _tea_detection_assets_root(project_root: Path) -> str:
@@ -628,21 +635,49 @@ def _tea_skill_availability(project_root: Path, required_steps: list[str] | None
     return available, missing
 
 
+def _resolved_explicit_tea_status(policy: dict[str, Any], required_steps: list[str]) -> tuple[list[str], str]:
+    available: list[str] = []
+    asset_roots: list[str] = []
+    steps = policy.get("steps") or {}
+    for step in required_steps:
+        if not isinstance(steps.get(step), dict):
+            continue
+        contract = steps[step]
+        assets = contract.get("assets") or {}
+        skill_name = str(assets.get("skillName") or "").strip()
+        if skill_name:
+            available.append(skill_name)
+        prompt = contract.get("prompt") or {}
+        template_file = str(prompt.get("templateFile") or "").strip()
+        if template_file:
+            root = str(Path(template_file).parent.parent).replace("\\", "/")
+            if root and root not in asset_roots:
+                asset_roots.append(root)
+    return available, asset_roots[0] if len(asset_roots) == 1 else ""
+
+
 def _detect_workflow_track(project_root: Path) -> dict[str, Any]:
     signals = _tea_project_signals(project_root)
     explicit_steps = _explicit_tea_steps(project_root)
     explicit_policy = bool(explicit_steps)
-    assets_root = _tea_detection_assets_root(project_root)
-    assets_ok, missing_assets = _tea_assets_complete(project_root, assets_root)
-    available_skills, missing_skills = _tea_skill_availability(project_root, explicit_steps or None)
-    explicit_policy_valid, explicit_policy_error = _explicit_tea_policy_valid(project_root)
+    explicit_policy_resolved, explicit_policy_error = _explicit_tea_policy_details(project_root)
+    explicit_policy_valid = explicit_policy_resolved is not None
+    if explicit_policy and explicit_policy_valid:
+        available_skills, assets_root = _resolved_explicit_tea_status(explicit_policy_resolved, explicit_steps)
+        missing_skills = []
+        missing_assets = []
+        assets_ok = True
+    else:
+        assets_root = _tea_detection_assets_root(project_root)
+        assets_ok, missing_assets = _tea_assets_complete(project_root, assets_root)
+        available_skills, missing_skills = _tea_skill_availability(project_root, explicit_steps or None)
     reasons: list[str] = []
     prompt = ""
     recommended_track = "standard"
     requires_confirmation = False
     tea_capable = bool(signals) and assets_ok and not missing_skills
 
-    if explicit_policy and explicit_policy_valid and assets_ok and not missing_skills:
+    if explicit_policy and explicit_policy_valid:
         recommended_track = "tea"
         reasons.append("Project already defines an explicit TEA story-automator policy override.")
     elif explicit_policy:
@@ -670,7 +705,7 @@ def _detect_workflow_track(project_root: Path) -> dict[str, Any]:
         "requiresConfirmation": requires_confirmation,
         "prompt": prompt,
         "teaDetected": explicit_policy or bool(signals),
-        "teaCapable": (explicit_policy_valid and assets_ok and not missing_skills) if explicit_policy else tea_capable,
+        "teaCapable": explicit_policy_valid if explicit_policy else tea_capable,
         "explicitTeaPolicy": explicit_policy,
         "signals": signals,
         "availableSkills": available_skills,

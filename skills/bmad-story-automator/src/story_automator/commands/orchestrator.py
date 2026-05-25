@@ -524,7 +524,11 @@ def _state_progress(args: list[str]) -> int:
             idx += 2
             continue
         if args[idx] == "--set" and idx + 1 < len(args):
-            key, value = args[idx + 1].split("=", 1)
+            raw_update = args[idx + 1]
+            if "=" not in raw_update:
+                print_json({"ok": False, "error": "invalid_set_argument", "argument": raw_update})
+                return 1
+            key, value = raw_update.split("=", 1)
             updates[_normalize_progress_key(key)] = value
             idx += 2
             continue

@@ -598,6 +598,41 @@ class StatePolicyMetadataTests(unittest.TestCase):
         self.assertFalse(payload["requiresConfirmation"])
         self.assertTrue(payload["explicitTeaPolicy"])
 
+    def test_detect_workflow_track_trusts_valid_explicit_tea_policy_with_custom_asset_root(self) -> None:
+        self._install_tea_skills(canonical=True, write_assets=False)
+        custom_root = self.project_root / "custom-tea-assets"
+        _write_tea_assets(self.project_root, root=custom_root)
+        override_dir = self.project_root / "_bmad" / "bmm"
+        override_dir.mkdir(parents=True, exist_ok=True)
+        override_steps = _tea_steps_override(self.project_root, canonical=True, assets_root="custom-tea-assets")
+        (override_dir / "story-automator.policy.json").write_text(
+            json.dumps(
+                {
+                    "workflow": {"sequence": ["create", "atdd", "dev", "test_automate", "test_review", "trace", "review"]},
+                    "steps": override_steps,
+                }
+            ),
+            encoding="utf-8",
+        )
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_detect_workflow_track([])
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["recommendedTrack"], "tea")
+        self.assertTrue(payload["teaCapable"])
+        self.assertEqual(payload["assetsRoot"], "custom-tea-assets")
+        self.assertEqual(payload["missingAssets"], [])
+        self.assertEqual(
+            payload["availableSkills"],
+            [
+                "bmad-testarch-atdd",
+                "bmad-testarch-automate",
+                "bmad-testarch-test-review",
+                "bmad-testarch-trace",
+            ],
+        )
+
     def test_detect_workflow_track_rejects_explicit_tea_policy_missing_step_contract(self) -> None:
         self._install_tea_skills(canonical=True)
         override_dir = self.project_root / "_bmad" / "bmm"
@@ -744,6 +779,24 @@ class StatePolicyMetadataTests(unittest.TestCase):
         self.assertEqual(payload["policyOverride"]["steps"]["atdd"]["prompt"]["templateFile"], "data/tea-story-automator/prompts/tea_step.md")
         self.assertEqual(payload["policyOverride"]["steps"]["nfr"]["parse"]["schemaFile"], "data/tea-story-automator/parse/tea_step.json")
 
+    def test_build_run_policy_normalizes_workflow_track_for_explicit_override(self) -> None:
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_build_run_policy(
+                [
+                    "--config-json",
+                    json.dumps(
+                        {
+                            "workflowTrack": "TEA",
+                            "policyOverride": {"workflow": {"sequence": ["create", "dev", "review"]}},
+                        }
+                    ),
+                ]
+            )
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["workflowTrack"], "tea")
+
     def test_build_run_policy_drops_nfr_when_nfr_skill_is_missing(self) -> None:
         self._install_tea_skills(canonical=True, write_assets=False)
         stdout = io.StringIO()
@@ -798,6 +851,25 @@ class StatePolicyMetadataTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         text = state_file.read_text(encoding="utf-8")
         self.assertIn("| 1.1 | ⏳ | done | ⏳ | ⏳ | ⏳ | done | ⏳ | ⏳ | ⏳ | in-progress |", text)
+
+    def test_state_progress_rejects_invalid_set_argument(self) -> None:
+        state_file = self._build_state()
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_orchestrator_helper(
+                [
+                    "state-progress",
+                    str(state_file),
+                    "--story",
+                    "1.1",
+                    "--set",
+                    "status",
+                ]
+            )
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["error"], "invalid_set_argument")
+        self.assertEqual(payload["argument"], "status")
 
     def test_build_state_doc_keeps_standard_summary_shape_unchanged(self) -> None:
         state_file = self._build_state()
@@ -961,9 +1033,10 @@ class patch_env:
                 os.environ[key] = value
 
 
-def _write_tea_assets(project_root: Path) -> None:
-    prompts = project_root / "_bmad" / "tea" / "story-automator" / "prompts"
-    parse = project_root / "_bmad" / "tea" / "story-automator" / "parse"
+def _write_tea_assets(project_root: Path, *, root: Path | None = None) -> None:
+    base = root or (project_root / "_bmad" / "tea" / "story-automator")
+    prompts = base / "prompts"
+    parse = base / "parse"
     prompts.mkdir(parents=True, exist_ok=True)
     parse.mkdir(parents=True, exist_ok=True)
     (prompts / "atdd.md").write_text("ATDD {{story_id}}\n", encoding="utf-8")
@@ -978,62 +1051,69 @@ def _write_tea_assets(project_root: Path) -> None:
     (parse / "trace.json").write_text(json.dumps({"requiredKeys": ["status", "trace_updated", "summary", "next_action"], "schema": {"status": "SUCCESS|FAILURE|AMBIGUOUS", "trace_updated": "true|false", "summary": "brief description", "next_action": "proceed|retry|escalate"}}), encoding="utf-8")
 
 
-def _tea_steps_override(project_root: Path, *, include_nfr: bool = False) -> dict[str, object]:
+def _tea_steps_override(
+    project_root: Path,
+    *,
+    include_nfr: bool = False,
+    canonical: bool = False,
+    assets_root: str = "_bmad/tea/story-automator",
+) -> dict[str, object]:
+    prefix = "bmad-testarch" if canonical else "bmad-tea-testarch"
     steps: dict[str, object] = {
         "atdd": {
             "label": "atdd",
             "assets": {
-                "skillName": "bmad-tea-testarch-atdd",
+                "skillName": f"{prefix}-atdd",
                 "workflowCandidates": ["workflow.md", "workflow.yaml"],
                 "instructionsCandidates": [],
                 "checklistCandidates": ["checklist.md"],
                 "templateCandidates": [],
                 "required": ["skill"],
             },
-            "prompt": {"templateFile": "_bmad/tea/story-automator/prompts/atdd.md", "interactionMode": "autonomous"},
-            "parse": {"schemaFile": "_bmad/tea/story-automator/parse/atdd.json"},
+            "prompt": {"templateFile": f"{assets_root}/prompts/atdd.md", "interactionMode": "autonomous"},
+            "parse": {"schemaFile": f"{assets_root}/parse/atdd.json"},
             "success": {"verifier": "session_exit"},
         },
         "test_automate": {
             "label": "test-automate",
             "assets": {
-                "skillName": "bmad-tea-testarch-automate",
+                "skillName": f"{prefix}-automate",
                 "workflowCandidates": ["workflow.md", "workflow.yaml"],
                 "instructionsCandidates": [],
                 "checklistCandidates": ["checklist.md"],
                 "templateCandidates": [],
                 "required": ["skill"],
             },
-            "prompt": {"templateFile": "_bmad/tea/story-automator/prompts/test_automate.md", "interactionMode": "autonomous"},
-            "parse": {"schemaFile": "_bmad/tea/story-automator/parse/test_automate.json"},
+            "prompt": {"templateFile": f"{assets_root}/prompts/test_automate.md", "interactionMode": "autonomous"},
+            "parse": {"schemaFile": f"{assets_root}/parse/test_automate.json"},
             "success": {"verifier": "session_exit"},
         },
         "test_review": {
             "label": "test-review",
             "assets": {
-                "skillName": "bmad-tea-testarch-test-review",
+                "skillName": f"{prefix}-test-review",
                 "workflowCandidates": ["workflow.md", "workflow.yaml"],
                 "instructionsCandidates": [],
                 "checklistCandidates": ["checklist.md"],
                 "templateCandidates": [],
                 "required": ["skill"],
             },
-            "prompt": {"templateFile": "_bmad/tea/story-automator/prompts/test_review.md", "interactionMode": "autonomous"},
-            "parse": {"schemaFile": "_bmad/tea/story-automator/parse/test_review.json"},
+            "prompt": {"templateFile": f"{assets_root}/prompts/test_review.md", "interactionMode": "autonomous"},
+            "parse": {"schemaFile": f"{assets_root}/parse/test_review.json"},
             "success": {"verifier": "session_exit"},
         },
         "trace": {
             "label": "trace",
             "assets": {
-                "skillName": "bmad-tea-testarch-trace",
+                "skillName": f"{prefix}-trace",
                 "workflowCandidates": ["workflow.md", "workflow.yaml"],
                 "instructionsCandidates": [],
                 "checklistCandidates": ["checklist.md"],
                 "templateCandidates": [],
                 "required": ["skill"],
             },
-            "prompt": {"templateFile": "_bmad/tea/story-automator/prompts/trace.md", "interactionMode": "autonomous"},
-            "parse": {"schemaFile": "_bmad/tea/story-automator/parse/trace.json"},
+            "prompt": {"templateFile": f"{assets_root}/prompts/trace.md", "interactionMode": "autonomous"},
+            "parse": {"schemaFile": f"{assets_root}/parse/trace.json"},
             "success": {"verifier": "session_exit"},
         },
     }
@@ -1041,15 +1121,15 @@ def _tea_steps_override(project_root: Path, *, include_nfr: bool = False) -> dic
         steps["nfr"] = {
             "label": "nfr",
             "assets": {
-                "skillName": "bmad-tea-testarch-nfr",
+                "skillName": f"{prefix}-nfr",
                 "workflowCandidates": ["workflow.md", "workflow.yaml"],
                 "instructionsCandidates": [],
                 "checklistCandidates": ["checklist.md"],
                 "templateCandidates": [],
                 "required": ["skill"],
             },
-            "prompt": {"templateFile": "_bmad/tea/story-automator/prompts/nfr.md", "interactionMode": "autonomous"},
-            "parse": {"schemaFile": "_bmad/tea/story-automator/parse/nfr.json"},
+            "prompt": {"templateFile": f"{assets_root}/prompts/nfr.md", "interactionMode": "autonomous"},
+            "parse": {"schemaFile": f"{assets_root}/parse/nfr.json"},
             "success": {"verifier": "session_exit"},
         }
     return steps

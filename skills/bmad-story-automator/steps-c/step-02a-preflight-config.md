@@ -83,8 +83,10 @@ For the TEA track, state clearly:
 - legacy `qa-generate-e2e-tests` is not added on the TEA track because `test_automate` supersedes it
 
 Collect:
-- `selected_optional_steps` = zero or more of `retro`, `nfr`, `validate-create-story`
+- `selected_optional_steps` = zero or more of `retro`, `nfr`
 - `workflow_track` = `tea`
+
+If `validate-create-story` is referenced elsewhere while `workflow_track == tea`, record that only as intent in `selected_optional_steps` notes; it does not trigger any automated action in v1.
 
 If TEA is not explicitly enabled:
 - `workflow_track` = `standard`
