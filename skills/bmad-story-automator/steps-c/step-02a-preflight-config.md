@@ -86,7 +86,7 @@ Collect:
 - `selected_optional_steps` = zero or more of `retro`, `nfr`
 - `workflow_track` = `tea`
 
-If `validate-create-story` is referenced elsewhere while `workflow_track == tea`, record that only as intent in `selected_optional_steps` notes; it does not trigger any automated action in v1.
+If `validate-create-story` is referenced elsewhere while `workflow_track == tea`, treat it as advisory only: do not add it to `selected_optional_steps`, and do not expect any automated action from story-automator in v1.
 
 If TEA is not explicitly enabled:
 - `workflow_track` = `standard`

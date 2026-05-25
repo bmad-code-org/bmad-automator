@@ -633,6 +633,38 @@ class StatePolicyMetadataTests(unittest.TestCase):
             ],
         )
 
+    def test_detect_workflow_track_reports_multiple_asset_roots_for_valid_explicit_policy(self) -> None:
+        self._install_tea_skills(canonical=True, write_assets=False)
+        _write_tea_assets(self.project_root)
+        custom_root = self.project_root / "custom-tea-assets"
+        _write_tea_assets(self.project_root, root=custom_root)
+        override_dir = self.project_root / "_bmad" / "bmm"
+        override_dir.mkdir(parents=True, exist_ok=True)
+        override_steps = _tea_steps_override(self.project_root, canonical=True)
+        override_steps["trace"] = _tea_steps_override(
+            self.project_root,
+            canonical=True,
+            assets_root="custom-tea-assets",
+        )["trace"]
+        (override_dir / "story-automator.policy.json").write_text(
+            json.dumps(
+                {
+                    "workflow": {"sequence": ["create", "atdd", "dev", "test_automate", "test_review", "trace", "review"]},
+                    "steps": override_steps,
+                }
+            ),
+            encoding="utf-8",
+        )
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_detect_workflow_track([])
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["recommendedTrack"], "tea")
+        self.assertTrue(payload["teaCapable"])
+        self.assertEqual(payload["missingAssets"], [])
+        self.assertEqual(payload["assetsRoot"], "_bmad/tea/story-automator, custom-tea-assets")
+
     def test_detect_workflow_track_rejects_explicit_tea_policy_missing_step_contract(self) -> None:
         self._install_tea_skills(canonical=True)
         override_dir = self.project_root / "_bmad" / "bmm"

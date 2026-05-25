@@ -653,7 +653,7 @@ def _resolved_explicit_tea_status(policy: dict[str, Any], required_steps: list[s
             root = str(Path(template_file).parent.parent).replace("\\", "/")
             if root and root not in asset_roots:
                 asset_roots.append(root)
-    return available, asset_roots[0] if len(asset_roots) == 1 else ""
+    return available, ", ".join(asset_roots)
 
 
 def _detect_workflow_track(project_root: Path) -> dict[str, Any]:
