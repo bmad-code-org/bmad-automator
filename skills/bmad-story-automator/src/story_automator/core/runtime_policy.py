@@ -238,7 +238,11 @@ def bundled_skill_root(project_root: str | Path | None = None) -> Path:
 def _load_bundled_policy_shape(project_root: str | Path | None = None) -> dict[str, Any]:
     root = Path(project_root or get_project_root()).resolve()
     bundle_root = bundled_skill_root(root)
-    policy = _read_json(bundle_root / "data" / "orchestration-policy.json")
+    policy_path = bundle_root / "data" / "orchestration-policy.json"
+    try:
+        policy = _read_json(policy_path)
+    except OSError as exc:
+        raise PolicyError(f"policy unreadable: {policy_path}") from exc
     _validate_policy_shape(policy)
     _prune_unreferenced_steps(policy)
     return policy

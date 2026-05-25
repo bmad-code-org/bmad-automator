@@ -802,6 +802,9 @@ def cmd_state_metrics(args: list[str]) -> int:
             parts = [part.strip() for part in line.split("|")]
             values = [part for part in parts[1:-1] if part]
             if len(values) >= 2:
+                first_cell = values[0]
+                if re.fullmatch(r"-+", first_cell):
+                    continue
                 total += 1
                 if any(token in values[-1].lower() for token in ("done", "complete", "completed")):
                     completed += 1

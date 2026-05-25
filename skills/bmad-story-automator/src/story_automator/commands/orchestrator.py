@@ -564,6 +564,9 @@ def _state_progress(args: list[str]) -> int:
     header_map = {name: pos for pos, name in enumerate(headers)}
     applied: list[str] = []
     for key, value in updates.items():
+        if key == "story":
+            print_json({"ok": False, "error": "story_column_immutable"})
+            return 1
         pos = header_map.get(key)
         if pos is None:
             continue

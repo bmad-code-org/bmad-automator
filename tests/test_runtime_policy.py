@@ -141,6 +141,17 @@ class RuntimePolicyTests(unittest.TestCase):
         with self.assertRaises(PolicyError):
             load_effective_policy(str(self.project_root))
 
+    def test_bundled_policy_read_failure_is_wrapped_as_policy_error(self) -> None:
+        policy_path = self.project_root / ".claude" / "skills" / "bmad-story-automator" / "data" / "orchestration-policy.json"
+        policy_path.unlink()
+        policy_path.mkdir()
+        with patch(
+            "story_automator.core.runtime_policy.bundled_skill_root",
+            return_value=self.project_root / ".claude" / "skills" / "bmad-story-automator",
+        ):
+            with self.assertRaisesRegex(PolicyError, r"policy unreadable: .*orchestration-policy\.json"):
+                load_effective_policy(str(self.project_root))
+
     def test_invalid_assets_type_rejected(self) -> None:
         self._write_override({"steps": {"review": {"assets": []}}})
         with self.assertRaises(PolicyError):

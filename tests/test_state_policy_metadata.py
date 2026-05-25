@@ -10,7 +10,13 @@ from pathlib import Path
 
 from story_automator.commands.orchestrator_epic_agents import parse_agent_config
 from story_automator.commands.orchestrator import cmd_orchestrator_helper
-from story_automator.commands.state import cmd_build_run_policy, cmd_build_state_doc, cmd_detect_workflow_track, cmd_validate_state
+from story_automator.commands.state import (
+    cmd_build_run_policy,
+    cmd_build_state_doc,
+    cmd_detect_workflow_track,
+    cmd_state_metrics,
+    cmd_validate_state,
+)
 from story_automator.commands.tmux import _build_cmd, cmd_tmux_wrapper
 
 
@@ -972,6 +978,48 @@ class StatePolicyMetadataTests(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["error"], "invalid_set_argument")
         self.assertEqual(payload["argument"], "status")
+
+    def test_state_progress_rejects_story_column_updates(self) -> None:
+        state_file = self._build_state()
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_orchestrator_helper(
+                [
+                    "state-progress",
+                    str(state_file),
+                    "--story",
+                    "1.1",
+                    "--set",
+                    "story=1.2",
+                ]
+            )
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["error"], "story_column_immutable")
+
+    def test_state_metrics_skips_markdown_divider_row(self) -> None:
+        state_file = self.project_root / "metrics-state.md"
+        state_file.write_text(
+            "\n".join(
+                [
+                    "---",
+                    "epic: 1",
+                    "---",
+                    "| Story | create-story | Status |",
+                    "|-------\t|--------------|--------|",
+                    "| 1.1 | done | pending |",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_state_metrics(["--state", str(state_file)])
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual(payload["storiesCompleted"], 0)
 
     def test_build_state_doc_keeps_standard_summary_shape_unchanged(self) -> None:
         state_file = self._build_state()
