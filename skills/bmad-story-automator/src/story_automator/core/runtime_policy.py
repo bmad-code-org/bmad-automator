@@ -19,9 +19,7 @@ VALID_PARSER_PROVIDERS = {"claude"}
 def load_bundled_policy(project_root: str | None = None, *, resolve_assets: bool = True) -> dict[str, Any]:
     root = Path(project_root or get_project_root()).resolve()
     bundle_root = bundled_skill_root(root)
-    policy = _read_json(bundle_root / "data" / "orchestration-policy.json")
-    _validate_policy_shape(policy)
-    _prune_unreferenced_steps(policy)
+    policy = _load_bundled_policy_shape(root)
     if resolve_assets:
         _resolve_policy_paths(policy, project_root=root, bundle_root=bundle_root)
     else:
@@ -105,19 +103,7 @@ def load_policy_snapshot(
     path = _ensure_within(path, root, "policy snapshot")
     if not path.is_file():
         raise PolicyError(f"policy snapshot missing: {path}")
-    try:
-        raw = read_text(path)
-    except OSError as exc:
-        raise PolicyError(f"policy snapshot unreadable: {path}") from exc
-    actual_hash = md5_hex8(raw)
-    if expected_hash and actual_hash != expected_hash:
-        raise PolicyError(f"policy snapshot hash mismatch: expected {expected_hash}, got {actual_hash}")
-    try:
-        policy = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise PolicyError(f"policy json invalid: {path}") from exc
-    _validate_policy_shape(policy)
-    _prune_unreferenced_steps(policy)
+    policy = _load_policy_snapshot_shape(path, expected_hash=expected_hash)
     if resolve_assets:
         _resolve_policy_paths(policy, project_root=root, bundle_root=bundled_skill_root(root))
     else:
@@ -145,6 +131,22 @@ def load_policy_for_state(
             resolve_assets=resolve_assets,
         )
     return load_bundled_policy(str(root), resolve_assets=resolve_assets)
+
+
+def load_policy_shape_for_state(state_file: str | Path, project_root: str | None = None) -> dict[str, Any]:
+    root = Path(project_root or get_project_root()).resolve()
+    try:
+        fields = parse_simple_frontmatter(read_text(state_file))
+    except OSError as exc:
+        raise PolicyError(f"state file unreadable: {state_file}") from exc
+    snapshot_file, snapshot_hash, legacy_mode = _state_policy_mode(fields)
+    if not legacy_mode:
+        path = Path(snapshot_file)
+        if not path.is_absolute():
+            path = root / path
+        path = _ensure_within(path, root, "policy snapshot")
+        return _load_policy_snapshot_shape(path, expected_hash=snapshot_hash)
+    return _load_bundled_policy_shape(root)
 
 
 def summarize_state_policy_fields(fields: dict[str, Any], *, project_root: str | Path | None = None) -> tuple[str, str, str, str, str]:
@@ -231,6 +233,32 @@ def bundled_skill_root(project_root: str | Path | None = None) -> Path:
         return bundled_story_skill_root(root)
     except FileNotFoundError as exc:
         raise PolicyError("bundled policy not found") from exc
+
+
+def _load_bundled_policy_shape(project_root: str | Path | None = None) -> dict[str, Any]:
+    root = Path(project_root or get_project_root()).resolve()
+    bundle_root = bundled_skill_root(root)
+    policy = _read_json(bundle_root / "data" / "orchestration-policy.json")
+    _validate_policy_shape(policy)
+    _prune_unreferenced_steps(policy)
+    return policy
+
+
+def _load_policy_snapshot_shape(path: Path, *, expected_hash: str = "") -> dict[str, Any]:
+    try:
+        raw = read_text(path)
+    except OSError as exc:
+        raise PolicyError(f"policy snapshot unreadable: {path}") from exc
+    actual_hash = md5_hex8(raw)
+    if expected_hash and actual_hash != expected_hash:
+        raise PolicyError(f"policy snapshot hash mismatch: expected {expected_hash}, got {actual_hash}")
+    try:
+        policy = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise PolicyError(f"policy json invalid: {path}") from exc
+    _validate_policy_shape(policy)
+    _prune_unreferenced_steps(policy)
+    return policy
 
 
 def _read_json(path: str | Path) -> dict[str, Any]:

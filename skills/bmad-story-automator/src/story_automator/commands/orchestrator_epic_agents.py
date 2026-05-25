@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 
 from story_automator.core.frontmatter import extract_frontmatter, find_frontmatter_value, parse_frontmatter
-from story_automator.core.runtime_policy import load_policy_for_state, story_task_sequence
+from story_automator.core.runtime_policy import load_policy_shape_for_state, story_task_sequence
 from story_automator.core.runtime_layout import runtime_provider
 from story_automator.core.sprint import sprint_status_epic
 from story_automator.core.story_keys import normalize_story_key
@@ -117,7 +117,7 @@ def agents_build_action(args: list[str]) -> int:
     config = parse_agent_config(options["config-json"])
     complexity = json.loads(read_text(options["complexity-file"]))
     state_fields = parse_frontmatter(read_text(options["state-file"]))
-    policy = load_policy_for_state(options["state-file"])
+    policy = load_policy_shape_for_state(options["state-file"])
     tasks_in_scope = story_task_sequence(policy)
     stories = []
     for story in complexity.get("stories", []):
