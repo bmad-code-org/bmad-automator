@@ -88,7 +88,7 @@ def cmd_build_state_doc(args: list[str]) -> int:
     try:
         config = json.loads(config_json)
     except json.JSONDecodeError:
-        write_json({"ok": False, "error": "missing_config"})
+        write_json({"ok": False, "error": "invalid_config_json"})
         return 1
     ensure_dir(output_folder)
     now = now_utc_z()
@@ -247,10 +247,14 @@ def cmd_build_state_doc(args: list[str]) -> int:
 
 def _normalize_string_list(value: Any) -> list[str]:
     if isinstance(value, list):
-        return [str(item).strip() for item in value if str(item).strip()]
+        return [str(item).strip() for item in value if item is not None and str(item).strip()]
     if isinstance(value, str) and value.strip():
         return [part.strip() for part in value.split(",") if part.strip()]
     return []
+
+
+def _normalize_option_list(value: Any) -> list[str]:
+    return [item.lower() for item in _normalize_string_list(value)]
 
 
 def _as_bool(value: Any, default: bool = False) -> bool:
@@ -453,12 +457,15 @@ def _build_run_policy(project_root: Path, config: dict[str, Any]) -> dict[str, A
         track = str(config.get("workflowTrack") or "standard").strip().lower()
         if track not in {"standard", "tea"}:
             track = "standard"
+        notes = _normalize_string_list(config.get("policyNotes"))
+        if _normalize_option_list(config.get("manualCheckpoints")):
+            notes.append("checkpoint-preview is out of scope for story-automator and was ignored.")
         return {
             "policyOverride": explicit_override,
             "workflowTrack": track,
-            "selectedOptionalSteps": _normalize_string_list(config.get("selectedOptionalSteps")),
-            "manualCheckpoints": _normalize_string_list(config.get("manualCheckpoints")),
-            "notes": _normalize_string_list(config.get("policyNotes")),
+            "selectedOptionalSteps": _normalize_option_list(config.get("selectedOptionalSteps")),
+            "manualCheckpoints": [],
+            "notes": notes,
         }
 
     has_run_selection = any(
@@ -476,8 +483,8 @@ def _build_run_policy(project_root: Path, config: dict[str, Any]) -> dict[str, A
     track = str(config.get("workflowTrack") or "standard").strip().lower()
     if track not in {"standard", "tea"}:
         track = "standard"
-    selected = set(_normalize_string_list(config.get("selectedOptionalSteps")))
-    manual = set(_normalize_string_list(config.get("manualCheckpoints")))
+    selected = set(_normalize_option_list(config.get("selectedOptionalSteps")))
+    manual = set(_normalize_option_list(config.get("manualCheckpoints")))
     notes: list[str] = []
     policy_override: dict[str, Any] = {}
 
@@ -551,7 +558,7 @@ def cmd_build_run_policy(args: list[str]) -> int:
     try:
         config = json.loads(config_json)
     except json.JSONDecodeError:
-        write_json({"ok": False, "error": "missing_config"})
+        write_json({"ok": False, "error": "invalid_config_json"})
         return 1
     selection = _build_run_policy(Path(get_project_root()), config)
     write_json({"ok": True, **selection})

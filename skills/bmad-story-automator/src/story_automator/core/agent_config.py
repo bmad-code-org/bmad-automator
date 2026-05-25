@@ -8,7 +8,7 @@ from typing import Any
 
 from .common import ensure_dir, file_exists, iso_now, read_text, write_atomic
 from .frontmatter import find_frontmatter_value
-from .runtime_policy import load_policy_shape_for_state, story_task_sequence
+from .runtime_policy import PolicyError, load_policy_shape_for_state, story_task_sequence
 from .runtime_layout import runtime_provider
 
 
@@ -194,7 +194,10 @@ def extract_json_block(text: str) -> str:
 def build_agents_file(state_file: str | Path, complexity_file: str | Path, output_path: str | Path, config_json: str) -> dict[str, Any]:
     config = parse_agent_config_json(config_json)
     complexity_payload = json.loads(read_text(complexity_file))
-    tasks_in_scope = story_task_sequence(load_policy_shape_for_state(state_file))
+    try:
+        tasks_in_scope = story_task_sequence(load_policy_shape_for_state(state_file))
+    except PolicyError as exc:
+        return {"ok": False, "error": "policy_invalid", "reason": str(exc)}
     stories = []
     for story in complexity_payload.get("stories", []):
         level = str(((story.get("complexity") or {}).get("level")) or "medium").strip().lower() or "medium"

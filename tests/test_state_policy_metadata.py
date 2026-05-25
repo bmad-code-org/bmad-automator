@@ -829,6 +829,53 @@ class StatePolicyMetadataTests(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["workflowTrack"], "tea")
 
+    def test_build_run_policy_normalizes_selected_optional_steps_for_explicit_override(self) -> None:
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_build_run_policy(
+                [
+                    "--config-json",
+                    json.dumps(
+                        {
+                            "workflowTrack": "TEA",
+                            "selectedOptionalSteps": ["NFR", "Retro", None],
+                            "policyOverride": {"workflow": {"sequence": ["create", "review"]}},
+                        }
+                    ),
+                ]
+            )
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["selectedOptionalSteps"], ["nfr", "retro"])
+
+    def test_build_run_policy_ignores_manual_checkpoints_for_explicit_override(self) -> None:
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_build_run_policy(
+                [
+                    "--config-json",
+                    json.dumps(
+                        {
+                            "workflowTrack": "TEA",
+                            "manualCheckpoints": ["checkpoint-preview"],
+                            "policyOverride": {"workflow": {"sequence": ["create", "review"]}},
+                        }
+                    ),
+                ]
+            )
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["manualCheckpoints"], [])
+        self.assertIn("checkpoint-preview is out of scope", payload["notes"][0])
+
+    def test_build_run_policy_distinguishes_invalid_json_from_missing_config(self) -> None:
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_build_run_policy(["--config-json", "{"])
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["error"], "invalid_config_json")
+
     def test_build_run_policy_drops_nfr_when_nfr_skill_is_missing(self) -> None:
         self._install_tea_skills(canonical=True, write_assets=False)
         stdout = io.StringIO()
@@ -853,6 +900,29 @@ class StatePolicyMetadataTests(unittest.TestCase):
         self.assertNotIn("nfr", payload["policyOverride"]["steps"])
         self.assertEqual(payload["selectedOptionalSteps"], [])
         self.assertTrue(any("TEA NFR skill is not installed" in note for note in payload["notes"]))
+
+    def test_build_run_policy_normalizes_selected_optional_steps_on_tea_track(self) -> None:
+        self._install_tea_skills(include_nfr=True, canonical=True, write_assets=False)
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_build_run_policy(
+                [
+                    "--config-json",
+                    json.dumps(
+                        {
+                            "workflowTrack": "TEA",
+                            "selectedOptionalSteps": ["NFR", "Retro", None],
+                        }
+                    ),
+                ]
+            )
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(
+            payload["policyOverride"]["workflow"]["sequence"],
+            ["create", "atdd", "dev", "test_automate", "test_review", "nfr", "trace", "review", "retro"],
+        )
+        self.assertEqual(payload["selectedOptionalSteps"], ["nfr", "retro"])
 
     def test_state_progress_updates_named_columns_in_tea_table(self) -> None:
         self._install_tea_skills(include_nfr=True)
