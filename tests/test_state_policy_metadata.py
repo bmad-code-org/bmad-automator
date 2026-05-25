@@ -693,6 +693,21 @@ class StatePolicyMetadataTests(unittest.TestCase):
         self.assertFalse(payload["teaCapable"])
         self.assertTrue(any("workflow.sequence references missing step: atdd" in note for note in payload["reasons"]))
 
+    def test_detect_workflow_track_reports_invalid_explicit_override_file(self) -> None:
+        override_dir = self.project_root / "_bmad" / "bmm"
+        override_dir.mkdir(parents=True, exist_ok=True)
+        (override_dir / "story-automator.policy.json").write_text("{bad json", encoding="utf-8")
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_detect_workflow_track([])
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["recommendedTrack"], "standard")
+        self.assertFalse(payload["teaCapable"])
+        self.assertTrue(payload["teaDetected"])
+        self.assertTrue(any("story-automator policy override, but it is invalid" in note for note in payload["reasons"]))
+        self.assertTrue(any("invalid JSON" in note for note in payload["reasons"]))
+
     def test_detect_workflow_track_rejects_explicit_tea_policy_when_skills_missing(self) -> None:
         _write_tea_assets(self.project_root)
         override_dir = self.project_root / "_bmad" / "bmm"
@@ -881,6 +896,14 @@ class StatePolicyMetadataTests(unittest.TestCase):
         self.assertEqual(code, 1)
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["error"], "invalid_config_json")
+
+    def test_build_run_policy_rejects_non_object_json(self) -> None:
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_build_run_policy(["--config-json", "[]"])
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["error"], "config_must_be_object")
 
     def test_build_run_policy_drops_nfr_when_nfr_skill_is_missing(self) -> None:
         self._install_tea_skills(canonical=True, write_assets=False)

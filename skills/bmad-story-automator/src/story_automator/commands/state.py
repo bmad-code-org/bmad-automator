@@ -560,24 +560,35 @@ def cmd_build_run_policy(args: list[str]) -> int:
     except json.JSONDecodeError:
         write_json({"ok": False, "error": "invalid_config_json"})
         return 1
+    if not isinstance(config, dict):
+        write_json({"ok": False, "error": "config_must_be_object"})
+        return 1
     selection = _build_run_policy(Path(get_project_root()), config)
     write_json({"ok": True, **selection})
     return 0
 
 
-def _explicit_policy_payload(project_root: Path) -> dict[str, Any]:
-    override_path = project_root / "_bmad" / "bmm" / "story-automator.policy.json"
+def _explicit_policy_path(project_root: Path) -> Path:
+    return project_root / "_bmad" / "bmm" / "story-automator.policy.json"
+
+
+def _explicit_policy_payload(project_root: Path) -> tuple[dict[str, Any], str]:
+    override_path = _explicit_policy_path(project_root)
     if not override_path.is_file():
-        return {}
+        return {}, ""
     try:
         payload = json.loads(read_text(override_path))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return payload if isinstance(payload, dict) else {}
+    except OSError as exc:
+        return {}, f"explicit story-automator policy unreadable: {exc}"
+    except json.JSONDecodeError as exc:
+        return {}, f"explicit story-automator policy invalid JSON: {exc}"
+    if not isinstance(payload, dict):
+        return {}, "explicit story-automator policy must be a JSON object"
+    return payload, ""
 
 
 def _explicit_tea_steps(project_root: Path) -> list[str]:
-    payload = _explicit_policy_payload(project_root)
+    payload, _ = _explicit_policy_payload(project_root)
     sequence = ((payload.get("workflow") or {}).get("sequence")) or []
     tea_steps = {"atdd", "test_automate", "test_review", "trace", "nfr"}
     return [step for step in sequence if isinstance(step, str) and step in tea_steps]
@@ -684,6 +695,8 @@ def _resolved_explicit_tea_status(policy: dict[str, Any], required_steps: list[s
 
 def _detect_workflow_track(project_root: Path) -> dict[str, Any]:
     signals = _tea_project_signals(project_root)
+    explicit_override_present = _explicit_policy_path(project_root).is_file()
+    _, explicit_override_error = _explicit_policy_payload(project_root)
     explicit_steps = _explicit_tea_steps(project_root)
     explicit_policy = bool(explicit_steps)
     explicit_policy_resolved, explicit_policy_error = _explicit_tea_policy_details(project_root)
@@ -710,6 +723,9 @@ def _detect_workflow_track(project_root: Path) -> dict[str, Any]:
         reasons.append("Project defines an explicit TEA story-automator policy override, but required TEA skills or assets are missing.")
         if explicit_policy_error:
             reasons.append(explicit_policy_error)
+    elif explicit_override_present and explicit_override_error:
+        reasons.append("Project defines a story-automator policy override, but it is invalid.")
+        reasons.append(explicit_override_error)
     elif tea_capable:
         recommended_track = "tea"
         requires_confirmation = True
@@ -730,7 +746,7 @@ def _detect_workflow_track(project_root: Path) -> dict[str, Any]:
         "recommendedTrack": recommended_track,
         "requiresConfirmation": requires_confirmation,
         "prompt": prompt,
-        "teaDetected": explicit_policy or bool(signals),
+        "teaDetected": explicit_policy or explicit_override_present or bool(signals),
         "teaCapable": explicit_policy_valid if explicit_policy else tea_capable,
         "explicitTeaPolicy": explicit_policy,
         "signals": signals,
