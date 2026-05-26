@@ -88,12 +88,19 @@ result=$("$scripts" monitor-session "$session" --json --agent "$current_agent")
 For each enabled TEA step:
 
 ```bash
+resolve_agent_for_task "{step}" "$state_file" "{story_id}"
+if should_apply_primary_model "$current_agent"; then
+  built_cmd=$("$scripts" tmux-wrapper build-cmd {step} {story_id} --agent "$current_agent" --model "$primary_model" --state-file "$state_file")
+else
+  built_cmd=$("$scripts" tmux-wrapper build-cmd {step} {story_id} --agent "$current_agent" --state-file "$state_file")
+fi
 session=$("$scripts" tmux-wrapper spawn {step} {epic} {story_id} \
   --agent "$current_agent" \
-  --command "$("$scripts" tmux-wrapper build-cmd {step} {story_id} --agent "$current_agent" --state-file "$state_file")")
+  --command "$built_cmd")
 result=$("$scripts" monitor-session "$session" --json --agent "$current_agent")
 "$scripts" tmux-wrapper kill "$session"
 parsed=$("$scripts" orchestrator-helper parse-output "$(printf '%s' "$result" | jq -r '.output_file')" {step} --state-file "$state_file")
+next_action=$(echo "$parsed" | jq -r '.next_action')
 ```
 
 - If `next_action == "proceed"` → continue to the next policy-defined step

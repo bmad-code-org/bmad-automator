@@ -18,7 +18,9 @@ from story_automator.core.runtime_policy import (
     load_runtime_policy,
     review_max_cycles,
     summarize_state_policy_fields,
+    workflow_sequence,
 )
+from story_automator.core.state_document import update_story_progress
 from story_automator.core.review_verify import verify_code_review_completion
 from story_automator.core.runtime_layout import active_marker_path, active_marker_project_entry
 from story_automator.core.success_verifiers import resolve_success_contract, run_success_verifier
@@ -75,6 +77,7 @@ def cmd_orchestrator_helper(args: list[str]) -> int:
         "agents-build": agents_build_action,
         "agents-resolve": agents_resolve_action,
         "retro-agent": retro_agent_action,
+        "policy-sequence": _policy_sequence,
     }
     handler = dispatch.get(action)
     if handler is None:
@@ -114,6 +117,7 @@ def _usage(code: int) -> int:
     print("  agents-build --state-file path --complexity-file path --output path --config-json '{}'", file=target)
     print("  agents-resolve (--state-file path | --agents-file path) --story ID --task STEP_NAME", file=target)
     print("  retro-agent --state-file path", file=target)
+    print("  policy-sequence [--state-file path]", file=target)
     return code
 
 
@@ -359,6 +363,28 @@ def _escalate(args: list[str]) -> int:
     return 0
 
 
+def _policy_sequence(args: list[str]) -> int:
+    state_file = ""
+    idx = 0
+    try:
+        while idx < len(args):
+            if args[idx] == "--state-file":
+                state_file = _flag_value(args, idx, "--state-file")
+                idx += 2
+                continue
+            idx += 1
+    except PolicyError as exc:
+        print_json({"ok": False, "error": "policy_invalid", "reason": str(exc)})
+        return 1
+    try:
+        policy = load_runtime_policy(get_project_root(), state_file=state_file, resolve_assets=False)
+    except (FileNotFoundError, PolicyError) as exc:
+        print_json({"ok": False, "error": "policy_invalid", "reason": str(exc)})
+        return 1
+    print_json({"ok": True, "sequence": workflow_sequence(policy)})
+    return 0
+
+
 def _commit_ready(args: list[str]) -> int:
     if not args:
         print_json({"ready": False, "reason": "story_id required"})
@@ -477,39 +503,6 @@ def _verify_step(args: list[str]) -> int:
     return exit_code
 
 
-def _normalize_progress_key(value: str) -> str:
-    key = str(value or "").strip().lower().replace("_", "-")
-    aliases = {
-        "create": "create-story",
-        "dev": "dev-story",
-        "auto": "automate",
-        "review": "code-review",
-        "test-automate": "test-automate",
-        "test-review": "test-review",
-        "git_commit": "git-commit",
-        "git-commit": "git-commit",
-        "status": "status",
-        "story": "story",
-        "create-story": "create-story",
-        "dev-story": "dev-story",
-        "automate": "automate",
-        "code-review": "code-review",
-        "atdd": "atdd",
-        "nfr": "nfr",
-        "trace": "trace",
-    }
-    return aliases.get(key, key)
-
-
-def _parse_markdown_cells(line: str) -> list[str]:
-    parts = [part.strip() for part in line.split("|")]
-    return [part for part in parts[1:-1]]
-
-
-def _render_markdown_row(cells: list[str]) -> str:
-    return "| " + " | ".join(cells) + " |"
-
-
 def _state_progress(args: list[str]) -> int:
     if not args:
         print_json({"ok": False, "error": "file_not_found"})
@@ -536,7 +529,7 @@ def _state_progress(args: list[str]) -> int:
                 print_json({"ok": False, "error": "invalid_set_argument", "argument": raw_update})
                 return 1
             key, value = raw_update.split("=", 1)
-            updates[_normalize_progress_key(key)] = value
+            updates[key] = value
             idx += 2
             continue
         idx += 1
@@ -545,54 +538,14 @@ def _state_progress(args: list[str]) -> int:
         return 1
 
     try:
-        lines = read_text(state_file).splitlines()
-    except OSError:
-        print_json({"ok": False, "error": "state_file_unreadable"})
+        policy = load_runtime_policy(get_project_root(), state_file=state_file, resolve_assets=False)
+    except (FileNotFoundError, PolicyError):
+        policy = None
+    ok, payload = update_story_progress(state_file, story_id, updates, policy=policy)
+    if not ok:
+        print_json(payload)
         return 1
-    header_idx = -1
-    story_idx = -1
-    headers: list[str] = []
-    story_cells: list[str] = []
-    for i, line in enumerate(lines):
-        if line.startswith("| Story "):
-            header_idx = i
-            headers = [_normalize_progress_key(cell) for cell in _parse_markdown_cells(line)]
-            continue
-        if header_idx >= 0 and line.startswith(f"| {story_id} |"):
-            story_idx = i
-            story_cells = _parse_markdown_cells(line)
-            break
-    if header_idx < 0 or not headers:
-        print_json({"ok": False, "error": "progress_table_not_found"})
-        return 1
-    if story_idx < 0 or not story_cells:
-        print_json({"ok": False, "error": "story_row_not_found"})
-        return 1
-    if len(story_cells) != len(headers):
-        print_json({"ok": False, "error": "progress_row_misaligned"})
-        return 1
-
-    header_map = {name: pos for pos, name in enumerate(headers)}
-    applied: list[str] = []
-    for key, value in updates.items():
-        if key == "story":
-            print_json({"ok": False, "error": "story_column_immutable"})
-            return 1
-        pos = header_map.get(key)
-        if pos is None:
-            continue
-        story_cells[pos] = value
-        applied.append(key)
-    if not applied:
-        print_json({"ok": False, "error": "progress_columns_not_found"})
-        return 1
-    lines[story_idx] = _render_markdown_row(story_cells)
-    try:
-        Path(state_file).write_text("\n".join(lines) + "\n", encoding="utf-8")
-    except OSError:
-        print_json({"ok": False, "error": "state_file_unwritable"})
-        return 1
-    print_json({"ok": True, "story": story_id, "updated": applied})
+    print_json(payload)
     return 0
 
 

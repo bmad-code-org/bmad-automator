@@ -77,7 +77,7 @@
       }
     },
     "auto": {
-      "label": "qa-generate-e2e-tests",
+      "label": "automate",
       "assets": {
         "skillName": "bmad-qa-generate-e2e-tests",
         "workflowCandidates": ["workflow.md", "workflow.yaml"],

@@ -83,7 +83,8 @@ For the TEA track, state clearly:
 - legacy `qa-generate-e2e-tests` is not added on the TEA track because `test_automate` supersedes it
 
 Collect:
-- `selected_optional_steps` = zero or more of `retro`, `nfr`
+- `selected_optional_steps` = JSON array string containing zero or more of `retro`, `nfr`
+  - examples: `[]`, `["retro"]`, `["nfr","retro"]`
 - `workflow_track` = `tea`
 
 If `validate-create-story` is referenced elsewhere while `workflow_track == tea`, treat it as advisory only: do not add it to `selected_optional_steps`, and do not expect any automated action from story-automator in v1.

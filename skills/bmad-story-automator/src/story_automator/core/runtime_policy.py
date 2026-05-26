@@ -41,13 +41,18 @@ def load_effective_policy(
     bundled = load_bundled_policy(str(root), resolve_assets=False)
     override_path = root / "_bmad" / "bmm" / "story-automator.policy.json"
     try:
-        override = _read_json(override_path) if override_path.is_file() else {}
+        override = _read_json(override_path) if _path_is_file(override_path) else {}
+    except PolicyError as exc:
+        if str(exc).startswith("path unreadable:"):
+            raise PolicyError(f"project override unreadable: {override_path}") from exc
+        raise
     except OSError as exc:
         raise PolicyError(f"project override unreadable: {override_path}") from exc
     policy = _deep_merge(_deep_merge(bundled, override), inline_override or {})
     _apply_legacy_env(policy)
-    _validate_policy_shape(policy)
+    _validate_policy_step_references(policy)
     _prune_unreferenced_steps(policy)
+    _validate_policy_shape(policy)
     _clear_resolved_fields(policy)
     if resolve_assets:
         _resolve_policy_paths(policy, project_root=root, bundle_root=bundled_skill_root(root))
@@ -256,8 +261,9 @@ def _load_bundled_policy_shape(project_root: str | Path | None = None) -> dict[s
         policy = _read_json(policy_path)
     except OSError as exc:
         raise PolicyError(f"policy unreadable: {policy_path}") from exc
-    _validate_policy_shape(policy)
+    _validate_policy_step_references(policy)
     _prune_unreferenced_steps(policy)
+    _validate_policy_shape(policy)
     return policy
 
 
@@ -273,8 +279,9 @@ def _load_policy_snapshot_shape(path: Path, *, expected_hash: str = "") -> dict[
         policy = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise PolicyError(f"policy json invalid: {path}") from exc
-    _validate_policy_shape(policy)
+    _validate_policy_step_references(policy)
     _prune_unreferenced_steps(policy)
+    _validate_policy_shape(policy)
     return policy
 
 
@@ -286,6 +293,13 @@ def _read_json(path: str | Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise PolicyError(f"policy json must be an object: {path}")
     return payload
+
+
+def _path_is_file(path: Path) -> bool:
+    try:
+        return path.is_file()
+    except OSError as exc:
+        raise PolicyError(f"path unreadable: {path}") from exc
 
 
 def _deep_merge(base: Any, override: Any) -> Any:
@@ -399,6 +413,19 @@ def _validate_policy_shape(policy: dict[str, Any]) -> None:
         required = (assets.get("required")) or []
         if not isinstance(required, list) or any(item not in VALID_ASSET_NAMES for item in required):
             raise PolicyError(f"invalid required assets for {name}")
+
+
+def _validate_policy_step_references(policy: dict[str, Any]) -> None:
+    workflow = _expect_optional_dict(policy, "workflow")
+    steps = policy.get("steps")
+    if not isinstance(steps, dict):
+        raise PolicyError("steps must be an object")
+    sequence = workflow.get("sequence") or []
+    if not isinstance(sequence, list) or not all(isinstance(item, str) for item in sequence):
+        raise PolicyError("workflow.sequence must be a string array")
+    for step in sequence:
+        if step not in steps:
+            raise PolicyError(f"workflow.sequence references missing step: {step}")
 
 
 def _resolve_policy_paths(policy: dict[str, Any], *, project_root: Path, bundle_root: Path) -> None:

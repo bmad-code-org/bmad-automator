@@ -56,7 +56,7 @@ class RuntimePolicyTests(unittest.TestCase):
         self.assertEqual(policy["workflow"]["repeat"]["review"]["maxCycles"], 3)
 
     def test_invalid_step_name_rejected(self) -> None:
-        self._write_override({"steps": {"ship": {"success": {"verifier": "session_exit"}}}})
+        self._write_override({"workflow": {"sequence": ["create", "ship"]}, "steps": {"ship": {"success": {"verifier": "session_exit"}}}})
         with self.assertRaises(PolicyError):
             load_effective_policy(str(self.project_root))
 
@@ -158,6 +158,32 @@ class RuntimePolicyTests(unittest.TestCase):
         with patch("story_automator.core.runtime_policy._read_json", side_effect=raising_read_json):
             with self.assertRaisesRegex(PolicyError, r"project override unreadable: .*story-automator\.policy\.json"):
                 load_effective_policy(str(self.project_root))
+
+    def test_unreadable_override_probe_is_wrapped_as_policy_error(self) -> None:
+        override_dir = self.project_root / "_bmad" / "bmm"
+        override_dir.mkdir(parents=True, exist_ok=True)
+        override_path = (override_dir / "story-automator.policy.json").resolve()
+        override_path.write_text("{}", encoding="utf-8")
+
+        with patch(
+            "story_automator.core.runtime_policy._path_is_file",
+            side_effect=lambda path: (_ for _ in ()).throw(OSError("permission denied")) if Path(path).resolve() == override_path else Path(path).is_file(),
+        ):
+            with self.assertRaisesRegex(PolicyError, r"project override unreadable: .*story-automator\.policy\.json"):
+                load_effective_policy(str(self.project_root))
+
+    def test_unused_invalid_override_step_does_not_break_standard_inline_selection(self) -> None:
+        self._write_override(
+            {
+                "workflow": {"sequence": ["create", "atdd", "dev", "review"]},
+                "steps": {"atdd": {"assets": []}},
+            }
+        )
+        policy = load_effective_policy(
+            str(self.project_root),
+            inline_override={"workflow": {"sequence": ["create", "dev", "review"]}},
+        )
+        self.assertEqual(policy["workflow"]["sequence"], ["create", "dev", "review"])
 
     def test_bundled_policy_read_failure_is_wrapped_as_policy_error(self) -> None:
         policy_path = self.project_root / ".claude" / "skills" / "bmad-story-automator" / "data" / "orchestration-policy.json"
