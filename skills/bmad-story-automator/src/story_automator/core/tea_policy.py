@@ -26,16 +26,16 @@ TEA_TRACK_DEFINITION = {
 def build_run_policy(project_root: Path, config: dict[str, Any]) -> dict[str, Any]:
     explicit_override = config.get("policyOverride")
     if isinstance(explicit_override, dict):
-        track = str(config.get("workflowTrack") or "standard").strip().lower()
-        if track not in {"standard", "tea"}:
-            track = "standard"
+        resolved = load_effective_policy(str(project_root), inline_override=explicit_override)
+        sequence = [step for step in ((resolved.get("workflow") or {}).get("sequence") or []) if isinstance(step, str)]
+        track = workflow_track_for_sequence(sequence)
         notes = _normalize_string_list(config.get("policyNotes"))
         if _normalize_option_list(config.get("manualCheckpoints")):
             notes.append("checkpoint-preview is out of scope for story-automator and was ignored.")
         return {
             "policyOverride": explicit_override,
             "workflowTrack": track,
-            "selectedOptionalSteps": _normalize_option_list(config.get("selectedOptionalSteps")),
+            "selectedOptionalSteps": selected_optional_steps_from_sequence(sequence),
             "manualCheckpoints": [],
             "notes": notes,
         }
@@ -44,8 +44,12 @@ def build_run_policy(project_root: Path, config: dict[str, Any]) -> dict[str, An
         key in config for key in ("workflowTrack", "selectedOptionalSteps", "manualCheckpoints", "teaAssetsRoot", "includeRetro")
     )
     if not has_run_selection:
+        if has_explicit_tea_policy(project_root):
+            policy_override = {"workflow": {"sequence": list(STANDARD_SEQUENCE)}}
+        else:
+            policy_override = {}
         return {
-            "policyOverride": {"workflow": {"sequence": list(STANDARD_SEQUENCE)}},
+            "policyOverride": policy_override,
             "workflowTrack": "standard",
             "selectedOptionalSteps": [],
             "manualCheckpoints": [],
@@ -210,6 +214,11 @@ def selected_optional_steps_from_sequence(sequence: list[str]) -> list[str]:
     if "retro" in sequence:
         selected.append("retro")
     return selected
+
+
+def workflow_track_for_sequence(sequence: list[str]) -> str:
+    unique_tea_steps = {"atdd", "test_automate", "test_review", "trace", "nfr"}
+    return "tea" if any(step in unique_tea_steps for step in sequence) else "standard"
 
 
 def explicit_policy_path(project_root: Path) -> Path:

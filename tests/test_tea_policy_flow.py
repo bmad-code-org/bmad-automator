@@ -51,6 +51,17 @@ class TeaPolicyFlowTests(unittest.TestCase):
         self.assertFalse(payload["teaDetected"])
         self.assertEqual(payload["recommendedTrack"], "standard")
 
+    def test_build_state_doc_preserves_explicit_standard_override_without_run_selection(self) -> None:
+        override_dir = self.project_root / "_bmad" / "bmm"
+        override_dir.mkdir(parents=True, exist_ok=True)
+        (override_dir / "story-automator.policy.json").write_text(
+            json.dumps({"workflow": {"sequence": ["create", "dev", "review"]}}),
+            encoding="utf-8",
+        )
+        state_file = self._build_state()
+        policy = load_policy_for_state(state_file, project_root=str(self.project_root))
+        self.assertEqual(policy["workflow"]["sequence"], ["create", "dev", "review"])
+
     def test_build_state_doc_preserves_explicit_project_tea_policy(self) -> None:
         install_tea_skills(self.project_root, canonical=True, write_assets=False)
         override_dir = self.project_root / "_bmad" / "bmm"

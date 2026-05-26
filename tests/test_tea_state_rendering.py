@@ -139,6 +139,19 @@ class TeaStateRenderingTests(unittest.TestCase):
         self.assertNotIn("**TEA Configuration:**", text)
         self.assertIn("| Story | create-story | dev-story | automate | code-review | git-commit | Status |", text)
 
+    def test_build_state_doc_uses_pinned_standard_override_metadata_for_explicit_policy_override(self) -> None:
+        state_file = self._build_state(
+            {
+                "workflowTrack": "tea",
+                "selectedOptionalSteps": ["nfr", "retro"],
+                "policyOverride": {"workflow": {"sequence": ["create", "dev", "review"]}},
+            }
+        )
+        text = state_file.read_text(encoding="utf-8")
+        self.assertNotIn('workflowTrack: "tea"', text)
+        self.assertNotIn("**TEA Configuration:**", text)
+        self.assertIn("| Story | create-story | dev-story | code-review | git-commit | Status |", text)
+
     def test_build_run_policy_uses_canonical_tea_skill_names_when_installed(self) -> None:
         install_tea_skills(self.project_root, include_nfr=True, canonical=True, write_assets=False)
         stdout = io.StringIO()
@@ -175,7 +188,8 @@ class TeaStateRenderingTests(unittest.TestCase):
             )
         self.assertEqual(code, 0)
         payload = json.loads(stdout.getvalue())
-        self.assertEqual(payload["workflowTrack"], "tea")
+        self.assertEqual(payload["workflowTrack"], "standard")
+        self.assertEqual(payload["selectedOptionalSteps"], [])
 
     def test_build_run_policy_normalizes_selected_optional_steps_for_explicit_override(self) -> None:
         stdout = io.StringIO()
@@ -194,7 +208,7 @@ class TeaStateRenderingTests(unittest.TestCase):
             )
         self.assertEqual(code, 0)
         payload = json.loads(stdout.getvalue())
-        self.assertEqual(payload["selectedOptionalSteps"], ["nfr", "retro"])
+        self.assertEqual(payload["selectedOptionalSteps"], [])
 
     def test_build_run_policy_ignores_manual_checkpoints_for_explicit_override(self) -> None:
         stdout = io.StringIO()
@@ -215,6 +229,19 @@ class TeaStateRenderingTests(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["manualCheckpoints"], [])
         self.assertIn("checkpoint-preview is out of scope", payload["notes"][0])
+
+    def test_build_run_policy_rejects_invalid_explicit_override(self) -> None:
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_build_run_policy(
+                [
+                    "--config-json",
+                    json.dumps({"workflowTrack": "TEA", "policyOverride": {"workflow": {"sequence": ["create", "ship"]}}}),
+                ]
+            )
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["error"], "policy_invalid")
 
     def test_build_run_policy_distinguishes_invalid_json_from_missing_config(self) -> None:
         stdout = io.StringIO()

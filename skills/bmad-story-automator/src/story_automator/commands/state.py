@@ -9,7 +9,7 @@ from ..core.frontmatter import extract_frontmatter, parse_simple_frontmatter
 from ..core.runtime_policy import PolicyError, load_policy_for_state, snapshot_effective_policy
 from ..core.agent_config import normalize_model as _model_or_none
 from ..core.state_document import progress_metrics, progress_table_lines
-from ..core.tea_policy import build_run_policy, detect_workflow_track
+from ..core.tea_policy import build_run_policy, detect_workflow_track, selected_optional_steps_from_sequence, workflow_track_for_sequence
 from ..core.utils import count_matches, ensure_dir, file_exists, get_project_root, now_utc, now_utc_z, read_text, write_json
 
 
@@ -56,6 +56,9 @@ def cmd_build_state_doc(args: list[str]) -> int:
     except (FileNotFoundError, PolicyError, ValueError) as exc:
         write_json({"ok": False, "error": "policy_snapshot_failed", "reason": str(exc)})
         return 1
+    pinned_sequence = [step for step in ((snapshot["policy"].get("workflow") or {}).get("sequence") or []) if isinstance(step, str)]
+    pinned_track = workflow_track_for_sequence(pinned_sequence)
+    pinned_optional_steps = selected_optional_steps_from_sequence(pinned_sequence)
     progress_header, progress_divider, progress_rows = progress_table_lines(snapshot["policy"], [item for item in config.get("storyRange", []) if isinstance(item, str)])
     text = read_text(template)
     replacements: dict[str, Any] = {
@@ -86,10 +89,10 @@ def cmd_build_state_doc(args: list[str]) -> int:
     )
     custom_instructions = json.dumps(config.get("customInstructions", ""))
     text = re.sub(r"(?m)^customInstructions:.*$", lambda m: f"customInstructions: {custom_instructions}", text)
-    if policy_selection["workflowTrack"] == "tea":
+    if pinned_track == "tea":
         tea_frontmatter = (
-            f'workflowTrack: {json.dumps(policy_selection["workflowTrack"])}\n'
-            f"selectedOptionalSteps: {json.dumps(policy_selection['selectedOptionalSteps'])}\n"
+            f'workflowTrack: {json.dumps(pinned_track)}\n'
+            f"selectedOptionalSteps: {json.dumps(pinned_optional_steps)}\n"
             f"manualCheckpoints: {json.dumps(policy_selection['manualCheckpoints'])}\n"
             f"policyNotes: {json.dumps(policy_selection['notes'])}\n"
         )
@@ -179,11 +182,11 @@ def cmd_build_state_doc(args: list[str]) -> int:
         "{{customInstructions}}": str(config.get("customInstructions", "")),
     }
     tea_block = ""
-    if policy_selection["workflowTrack"] == "tea":
+    if pinned_track == "tea":
         tea_block_lines = [
             "**TEA Configuration:**",
             "- Mandatory TEA Core: atdd, test_automate, test_review, trace",
-            f"- Optional Automated Steps: {', '.join(policy_selection['selectedOptionalSteps']) or 'none'}",
+            f"- Optional Automated Steps: {', '.join(pinned_optional_steps) or 'none'}",
             f"- Policy Notes: {'; '.join(policy_selection['notes']) or 'none'}",
             "",
         ]
