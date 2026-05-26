@@ -40,7 +40,10 @@ def load_effective_policy(
     root = Path(project_root or get_project_root()).resolve()
     bundled = load_bundled_policy(str(root), resolve_assets=False)
     override_path = root / "_bmad" / "bmm" / "story-automator.policy.json"
-    override = _read_json(override_path) if override_path.is_file() else {}
+    try:
+        override = _read_json(override_path) if override_path.is_file() else {}
+    except OSError as exc:
+        raise PolicyError(f"project override unreadable: {override_path}") from exc
     policy = _deep_merge(_deep_merge(bundled, override), inline_override or {})
     _apply_legacy_env(policy)
     _validate_policy_shape(policy)
@@ -101,7 +104,11 @@ def load_policy_snapshot(
     if not path.is_absolute():
         path = root / path
     path = _ensure_within(path, root, "policy snapshot")
-    if not path.is_file():
+    try:
+        snapshot_exists = path.is_file()
+    except OSError as exc:
+        raise PolicyError(f"policy snapshot unreadable: {path}") from exc
+    if not snapshot_exists:
         raise PolicyError(f"policy snapshot missing: {path}")
     policy = _load_policy_snapshot_shape(path, expected_hash=expected_hash)
     if resolve_assets:
@@ -145,6 +152,12 @@ def load_policy_shape_for_state(state_file: str | Path, project_root: str | None
         if not path.is_absolute():
             path = root / path
         path = _ensure_within(path, root, "policy snapshot")
+        try:
+            snapshot_exists = path.is_file()
+        except OSError as exc:
+            raise PolicyError(f"policy snapshot unreadable: {path}") from exc
+        if not snapshot_exists:
+            raise PolicyError(f"policy snapshot missing: {path}")
         return _load_policy_snapshot_shape(path, expected_hash=snapshot_hash)
     return _load_bundled_policy_shape(root)
 

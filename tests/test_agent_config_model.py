@@ -254,7 +254,7 @@ class CoreAgentConfigModelTests(unittest.TestCase):
             result = build_agents_file(state_file, complexity_file, output, json.dumps({"defaultPrimary": "claude"}))
             self.assertFalse(result["ok"])
             self.assertEqual(result["error"], "policy_invalid")
-            self.assertIn("policy snapshot unreadable:", result["reason"])
+            self.assertIn("policy snapshot missing:", result["reason"])
             self.assertTrue(result["reason"].endswith("missing.json"))
 
 
@@ -310,7 +310,7 @@ class OrchestratorEpicAgentsModelTests(unittest.TestCase):
             payload = json.loads(stdout.getvalue())
             self.assertFalse(payload["ok"])
             self.assertEqual(payload["error"], "policy_invalid")
-            self.assertIn("policy snapshot unreadable:", payload["reason"])
+            self.assertIn("policy snapshot missing:", payload["reason"])
             self.assertTrue(payload["reason"].endswith("missing.json"))
 
 

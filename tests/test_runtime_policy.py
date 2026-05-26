@@ -10,6 +10,7 @@ from unittest.mock import patch
 from story_automator.core.runtime_policy import (
     PolicyError,
     load_effective_policy,
+    load_policy_shape_for_state,
     load_policy_snapshot,
     load_runtime_policy,
     snapshot_effective_policy,
@@ -140,6 +141,23 @@ class RuntimePolicyTests(unittest.TestCase):
         (override_dir / "story-automator.policy.json").write_text("{bad json", encoding="utf-8")
         with self.assertRaises(PolicyError):
             load_effective_policy(str(self.project_root))
+
+    def test_unreadable_override_file_is_wrapped_as_policy_error(self) -> None:
+        override_dir = self.project_root / "_bmad" / "bmm"
+        override_dir.mkdir(parents=True, exist_ok=True)
+        override_path = override_dir / "story-automator.policy.json"
+        override_path.write_text("{}", encoding="utf-8")
+
+        original_read_json = __import__("story_automator.core.runtime_policy", fromlist=["_read_json"])._read_json
+
+        def raising_read_json(path):
+            if Path(path) == override_path:
+                raise OSError("permission denied")
+            return original_read_json(path)
+
+        with patch("story_automator.core.runtime_policy._read_json", side_effect=raising_read_json):
+            with self.assertRaisesRegex(PolicyError, r"project override unreadable: .*story-automator\.policy\.json"):
+                load_effective_policy(str(self.project_root))
 
     def test_bundled_policy_read_failure_is_wrapped_as_policy_error(self) -> None:
         policy_path = self.project_root / ".claude" / "skills" / "bmad-story-automator" / "data" / "orchestration-policy.json"
@@ -311,6 +329,46 @@ class RuntimePolicyTests(unittest.TestCase):
     def test_explicit_directory_state_file_raises_policy_error(self) -> None:
         with self.assertRaisesRegex(PolicyError, "state file unreadable"):
             load_runtime_policy(str(self.project_root), state_file=str(self.project_root))
+
+    def test_load_policy_shape_for_state_reports_missing_snapshot_precisely(self) -> None:
+        state_file = self.project_root / "orchestration-missing-snapshot.md"
+        state_file.write_text(
+            "---\npolicySnapshotFile: \"missing.json\"\npolicySnapshotHash: \"deadbeef\"\n---\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(PolicyError, r"policy snapshot missing: .*missing\.json"):
+            load_policy_shape_for_state(str(state_file), project_root=str(self.project_root))
+
+    def test_load_policy_shape_for_state_wraps_snapshot_stat_errors(self) -> None:
+        state_file = self.project_root / "orchestration-unreadable-snapshot.md"
+        state_file.write_text(
+            "---\npolicySnapshotFile: \"blocked.json\"\npolicySnapshotHash: \"deadbeef\"\n---\n",
+            encoding="utf-8",
+        )
+        blocked_path = (self.project_root / "blocked.json").resolve()
+        original_is_file = Path.is_file
+
+        def raising_is_file(path: Path) -> bool:
+            if path.resolve() == blocked_path:
+                raise PermissionError("permission denied")
+            return original_is_file(path)
+
+        with patch("pathlib.Path.is_file", autospec=True, side_effect=raising_is_file):
+            with self.assertRaisesRegex(PolicyError, r"policy snapshot unreadable: .*blocked\.json"):
+                load_policy_shape_for_state(str(state_file), project_root=str(self.project_root))
+
+    def test_load_policy_snapshot_wraps_snapshot_stat_errors(self) -> None:
+        blocked_path = (self.project_root / "blocked.json").resolve()
+        original_is_file = Path.is_file
+
+        def raising_is_file(path: Path) -> bool:
+            if path.resolve() == blocked_path:
+                raise PermissionError("permission denied")
+            return original_is_file(path)
+
+        with patch("pathlib.Path.is_file", autospec=True, side_effect=raising_is_file):
+            with self.assertRaisesRegex(PolicyError, r"policy snapshot unreadable: .*blocked\.json"):
+                load_policy_snapshot("blocked.json", project_root=str(self.project_root), expected_hash="deadbeef")
 
     def _install_bundle(self) -> None:
         source_skill = REPO_ROOT / "skills" / "bmad-story-automator"

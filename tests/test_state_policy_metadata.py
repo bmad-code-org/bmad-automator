@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 from story_automator.commands.orchestrator_epic_agents import parse_agent_config
 from story_automator.commands.orchestrator import cmd_orchestrator_helper
@@ -1019,6 +1020,63 @@ class StatePolicyMetadataTests(unittest.TestCase):
         self.assertEqual(code, 1)
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["error"], "story_column_immutable")
+
+    def test_state_progress_returns_structured_error_when_state_file_is_unreadable(self) -> None:
+        state_file = self._build_state()
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            with patch("story_automator.commands.orchestrator.read_text", side_effect=OSError("permission denied")):
+                code = cmd_orchestrator_helper(
+                    [
+                        "state-progress",
+                        str(state_file),
+                        "--story",
+                        "1.1",
+                        "--set",
+                        "status=done",
+                    ]
+                )
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["error"], "state_file_unreadable")
+
+    def test_state_progress_returns_structured_error_when_state_file_stat_is_unreadable(self) -> None:
+        state_file = self._build_state()
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            with patch("story_automator.commands.orchestrator.file_exists", side_effect=PermissionError("permission denied")):
+                code = cmd_orchestrator_helper(
+                    [
+                        "state-progress",
+                        str(state_file),
+                        "--story",
+                        "1.1",
+                        "--set",
+                        "status=done",
+                    ]
+                )
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["error"], "state_file_unreadable")
+
+    def test_state_progress_returns_structured_error_when_state_file_is_unwritable(self) -> None:
+        state_file = self._build_state()
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            with patch("pathlib.Path.write_text", side_effect=OSError("permission denied")):
+                code = cmd_orchestrator_helper(
+                    [
+                        "state-progress",
+                        str(state_file),
+                        "--story",
+                        "1.1",
+                        "--set",
+                        "status=done",
+                    ]
+                )
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["error"], "state_file_unwritable")
 
     def test_state_metrics_skips_markdown_divider_row(self) -> None:
         state_file = self.project_root / "metrics-state.md"

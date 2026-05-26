@@ -511,10 +511,17 @@ def _render_markdown_row(cells: list[str]) -> str:
 
 
 def _state_progress(args: list[str]) -> int:
-    if not args or not file_exists(args[0]):
+    if not args:
         print_json({"ok": False, "error": "file_not_found"})
         return 1
     state_file = args[0]
+    try:
+        if not file_exists(state_file):
+            print_json({"ok": False, "error": "file_not_found"})
+            return 1
+    except OSError:
+        print_json({"ok": False, "error": "state_file_unreadable"})
+        return 1
     story_id = ""
     updates: dict[str, str] = {}
     idx = 1
@@ -537,7 +544,11 @@ def _state_progress(args: list[str]) -> int:
         print_json({"ok": False, "error": "missing_story_or_updates"})
         return 1
 
-    lines = read_text(state_file).splitlines()
+    try:
+        lines = read_text(state_file).splitlines()
+    except OSError:
+        print_json({"ok": False, "error": "state_file_unreadable"})
+        return 1
     header_idx = -1
     story_idx = -1
     headers: list[str] = []
@@ -576,7 +587,11 @@ def _state_progress(args: list[str]) -> int:
         print_json({"ok": False, "error": "progress_columns_not_found"})
         return 1
     lines[story_idx] = _render_markdown_row(story_cells)
-    Path(state_file).write_text("\n".join(lines) + "\n", encoding="utf-8")
+    try:
+        Path(state_file).write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except OSError:
+        print_json({"ok": False, "error": "state_file_unwritable"})
+        return 1
     print_json({"ok": True, "story": story_id, "updated": applied})
     return 0
 
