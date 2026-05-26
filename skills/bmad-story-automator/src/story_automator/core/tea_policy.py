@@ -142,7 +142,11 @@ def build_run_policy(project_root: Path, config: dict[str, Any]) -> dict[str, An
 def detect_workflow_track(project_root: Path) -> dict[str, Any]:
     signals = tea_project_signals(project_root)
     explicit_override_present, explicit_override_stat_error = path_is_file(explicit_policy_path(project_root))
-    _, explicit_override_error = explicit_policy_payload(project_root)
+    explicit_override_payload, explicit_override_error = explicit_policy_payload(project_root)
+    explicit_override_sequence = [
+        step for step in (((explicit_override_payload.get("workflow") or {}).get("sequence")) or []) if isinstance(step, str)
+    ]
+    explicit_override_track = workflow_track_for_sequence(explicit_override_sequence) if explicit_override_payload else "standard"
     explicit_steps = explicit_tea_steps(project_root)
     explicit_policy = bool(explicit_steps)
     explicit_policy_resolved, explicit_policy_error = explicit_tea_policy_details(project_root)
@@ -152,6 +156,10 @@ def detect_workflow_track(project_root: Path) -> dict[str, Any]:
         missing_skills = []
         missing_assets = []
         assets_ok = True
+    elif explicit_policy:
+        available_skills, missing_skills = tea_skill_availability(project_root, explicit_steps or None)
+        assets_root, missing_assets = explicit_tea_assets_status(project_root, explicit_override_payload, explicit_steps)
+        assets_ok = not missing_assets
     else:
         assets_root = tea_detected_assets_root(project_root)
         assets_ok, missing_assets = tea_assets_complete(project_root, assets_root)
@@ -169,6 +177,8 @@ def detect_workflow_track(project_root: Path) -> dict[str, Any]:
         reasons.append("Project defines an explicit TEA story-automator policy override, but required TEA skills or assets are missing.")
         if explicit_policy_error:
             reasons.append(explicit_policy_error)
+    elif explicit_override_payload and explicit_override_track == "standard":
+        reasons.append("Project already defines an explicit standard story-automator policy override.")
     elif explicit_override_stat_error:
         reasons.append("Project defines a story-automator policy override, but it is unreadable.")
         reasons.append(explicit_override_stat_error)
@@ -486,6 +496,30 @@ def resolved_explicit_tea_status(policy: dict[str, Any], required_steps: list[st
             if root and root not in asset_roots:
                 asset_roots.append(root)
     return available, ", ".join(asset_roots)
+
+
+def explicit_tea_assets_status(project_root: Path, payload: dict[str, Any], required_steps: list[str]) -> tuple[str, list[str]]:
+    steps = payload.get("steps") or {}
+    asset_roots: list[str] = []
+    missing_assets: list[str] = []
+    for step in required_steps:
+        contract = steps.get(step)
+        if not isinstance(contract, dict):
+            continue
+        prompt = contract.get("prompt") or {}
+        template_file = str(prompt.get("templateFile") or "").strip()
+        if not template_file:
+            continue
+        root = str(Path(template_file).parent.parent).replace("\\", "/")
+        if not root or root in asset_roots:
+            continue
+        asset_roots.append(root)
+        _, missing = tea_assets_complete(project_root, root)
+        missing_assets.extend(missing)
+    if not asset_roots:
+        return "", ["missing TEA story-automator assets root"]
+    dedup_missing = list(dict.fromkeys(missing_assets))
+    return ", ".join(asset_roots), dedup_missing
 
 
 def _normalize_string_list(value: Any) -> list[str]:

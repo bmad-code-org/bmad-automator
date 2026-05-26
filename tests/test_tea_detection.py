@@ -78,6 +78,15 @@ class TeaDetectionTests(unittest.TestCase):
         self.assertFalse(payload["teaCapable"])
         self.assertTrue(payload["missingSkills"])
 
+    def test_detect_workflow_track_honors_explicit_standard_override_even_when_project_is_tea_capable(self) -> None:
+        install_tea_skills(self.project_root, canonical=True, write_assets=False)
+        self._write_policy_override({"workflow": {"sequence": ["create", "dev", "review"]}})
+        payload = self._detect()
+        self.assertEqual(payload["recommendedTrack"], "standard")
+        self.assertFalse(payload["requiresConfirmation"])
+        self.assertFalse(payload["explicitTeaPolicy"])
+        self.assertTrue(any("explicit standard story-automator policy override" in note for note in payload["reasons"]))
+
     def test_detect_workflow_track_honors_explicit_tea_policy(self) -> None:
         install_tea_skills(self.project_root)
         self._write_policy_override(
@@ -183,6 +192,21 @@ class TeaDetectionTests(unittest.TestCase):
         self.assertFalse(payload["teaCapable"])
         self.assertTrue(payload["explicitTeaPolicy"])
         self.assertIn("bmad-testarch-nfr", payload["missingSkills"])
+
+    def test_detect_workflow_track_reports_explicit_invalid_custom_asset_root_consistently(self) -> None:
+        install_tea_skills(self.project_root, canonical=True, write_assets=False)
+        self._write_policy_override(
+            {
+                "workflow": {"sequence": ["create", "atdd", "dev", "test_automate", "test_review", "trace", "review"]},
+                "steps": tea_steps_override(canonical=True, assets_root="missing-custom-root"),
+            }
+        )
+        payload = self._detect()
+        self.assertEqual(payload["recommendedTrack"], "standard")
+        self.assertFalse(payload["teaCapable"])
+        self.assertEqual(payload["assetsRoot"], "missing-custom-root")
+        self.assertEqual(payload["missingAssets"], ["missing TEA story-automator assets root"])
+        self.assertTrue(any("missing-custom-root" in item for item in payload["reasons"]))
 
     def test_agents_build_uses_pinned_tea_story_sequence(self) -> None:
         install_tea_skills(self.project_root)
