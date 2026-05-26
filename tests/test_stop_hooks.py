@@ -13,7 +13,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 from story_automator.commands.basic import cmd_ensure_stop_hook, cmd_stop_hook
-from story_automator.core.stop_hooks import HookConfigError, _codex_project_is_trusted
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -109,6 +108,54 @@ class StopHookTests(unittest.TestCase):
         self.assertTrue(second["trusted"])
         self.assertEqual(second["hooksReason"], "already_configured")
         self.assertEqual(second["configReason"], "already_enabled")
+
+    def test_ensure_stop_hook_codex_uses_global_project_trust(self) -> None:
+        self._install_bundle(".agents")
+        global_config = self._write_global_codex_config(self._trusted_entry())
+
+        with patch("story_automator.core.stop_hooks._codex_global_config_path", return_value=global_config):
+            first = self._run_ensure_stop_hook("codex")
+            second = self._run_ensure_stop_hook("codex")
+
+        self.assertTrue(first["changed"])
+        self.assertTrue(first["trusted"])
+        self.assertEqual(first["verificationState"], "configured")
+        self.assertFalse(second["changed"])
+        self.assertEqual(second["reason"], "already_configured")
+        self.assertTrue(second["trusted"])
+        self.assertEqual(second["verificationState"], "verified")
+
+    def test_ensure_stop_hook_codex_ignores_missing_global_config(self) -> None:
+        self._install_bundle(".agents")
+        global_config = self.project_root / "missing-home" / ".codex" / "config.toml"
+
+        with patch("story_automator.core.stop_hooks._codex_global_config_path", return_value=global_config):
+            first = self._run_ensure_stop_hook("codex")
+            second = self._run_ensure_stop_hook("codex")
+
+        self.assertTrue(first["changed"])
+        self.assertFalse(first["trusted"])
+        self.assertEqual(first["verificationState"], "configured")
+        self.assertFalse(second["changed"])
+        self.assertEqual(second["reason"], "pending_trust")
+        self.assertFalse(second["trusted"])
+        self.assertEqual(second["verificationState"], "pending_trust")
+
+    def test_ensure_stop_hook_codex_ignores_invalid_global_config(self) -> None:
+        self._install_bundle(".agents")
+        global_config = self._write_global_codex_config("[projects\n")
+
+        with patch("story_automator.core.stop_hooks._codex_global_config_path", return_value=global_config):
+            first = self._run_ensure_stop_hook("codex")
+            second = self._run_ensure_stop_hook("codex")
+
+        self.assertTrue(first["changed"])
+        self.assertFalse(first["trusted"])
+        self.assertEqual(first["verificationState"], "configured")
+        self.assertFalse(second["changed"])
+        self.assertEqual(second["reason"], "pending_trust")
+        self.assertFalse(second["trusted"])
+        self.assertEqual(second["verificationState"], "pending_trust")
 
     def test_ensure_stop_hook_codex_preserves_existing_config(self) -> None:
         self._install_bundle(".agents")
@@ -580,6 +627,9 @@ class StopHookTests(unittest.TestCase):
         self.assertEqual(code, expected_code)
         return json.loads(stdout.getvalue())
 
+    def _trusted_entry(self) -> str:
+        return f'[projects.{json.dumps(str(self.project_root.resolve()))}]\ntrust_level = "trusted"\n'
+
     def _write_codex_trust_level(self, trust_level: str) -> None:
         codex_dir = self.project_root / ".codex"
         codex_dir.mkdir(parents=True, exist_ok=True)
@@ -592,68 +642,11 @@ class StopHookTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-
-class CodexTrustResolutionTests(unittest.TestCase):
-    """Trust may be granted in the project-local or the global ~/.codex/config.toml."""
-
-    def setUp(self) -> None:
-        self.tmp = tempfile.TemporaryDirectory()
-        self.project_root = Path(self.tmp.name)
-        self.local_config = self.project_root / ".codex" / "config.toml"
-        self.local_config.parent.mkdir(parents=True, exist_ok=True)
-        self.global_home = tempfile.TemporaryDirectory()
-        self.global_config = Path(self.global_home.name) / ".codex" / "config.toml"
-
-    def tearDown(self) -> None:
-        self.tmp.cleanup()
-        self.global_home.cleanup()
-
-    def _trusted_entry(self) -> str:
-        return f'[projects.{json.dumps(str(self.project_root.resolve()))}]\ntrust_level = "trusted"\n'
-
-    def _write_local(self, body: str) -> None:
-        self.local_config.write_text(body, encoding="utf-8")
-
-    def _write_global(self, body: str) -> None:
-        self.global_config.parent.mkdir(parents=True, exist_ok=True)
-        self.global_config.write_text(body, encoding="utf-8")
-
-    def _is_trusted(self) -> bool:
-        with patch(
-            "story_automator.core.stop_hooks._codex_global_config_path",
-            return_value=self.global_config,
-        ):
-            return _codex_project_is_trusted(self.local_config, self.project_root)
-
-    def test_trusts_project_from_local_config(self) -> None:
-        self._write_local("[features]\ncodex_hooks = true\n\n" + self._trusted_entry())
-        self.assertTrue(self._is_trusted())
-
-    def test_trusts_project_from_global_config_when_local_has_no_grant(self) -> None:
-        self._write_local("[features]\ncodex_hooks = true\n")
-        self._write_global(self._trusted_entry())
-        self.assertTrue(self._is_trusted())
-
-    def test_untrusted_when_neither_config_grants_trust(self) -> None:
-        self._write_local("[features]\ncodex_hooks = true\n")
-        self._write_global('[projects."/some/other/path"]\ntrust_level = "trusted"\n')
-        self.assertFalse(self._is_trusted())
-
-    def test_missing_global_config_is_ignored(self) -> None:
-        self._write_local("[features]\ncodex_hooks = true\n")
-        self.assertFalse(self.global_config.exists())
-        self.assertFalse(self._is_trusted())
-
-    def test_invalid_global_config_is_ignored(self) -> None:
-        self._write_local("[features]\ncodex_hooks = true\n")
-        self._write_global("[projects\n")  # malformed TOML
-        self.assertFalse(self._is_trusted())
-
-    def test_invalid_local_config_still_raises(self) -> None:
-        self._write_local("[features\n")  # malformed TOML
-        with self.assertRaises(HookConfigError) as ctx:
-            self._is_trusted()
-        self.assertEqual(ctx.exception.code, "invalid_toml")
+    def _write_global_codex_config(self, body: str) -> Path:
+        global_config = self.project_root / "global-home" / ".codex" / "config.toml"
+        global_config.parent.mkdir(parents=True, exist_ok=True)
+        global_config.write_text(body, encoding="utf-8")
+        return global_config
 
 
 if __name__ == "__main__":
