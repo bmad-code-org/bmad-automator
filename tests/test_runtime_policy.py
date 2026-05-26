@@ -145,13 +145,13 @@ class RuntimePolicyTests(unittest.TestCase):
     def test_unreadable_override_file_is_wrapped_as_policy_error(self) -> None:
         override_dir = self.project_root / "_bmad" / "bmm"
         override_dir.mkdir(parents=True, exist_ok=True)
-        override_path = override_dir / "story-automator.policy.json"
+        override_path = (override_dir / "story-automator.policy.json").resolve()
         override_path.write_text("{}", encoding="utf-8")
 
         original_read_json = __import__("story_automator.core.runtime_policy", fromlist=["_read_json"])._read_json
 
         def raising_read_json(path):
-            if Path(path) == override_path:
+            if Path(path).resolve() == override_path:
                 raise OSError("permission denied")
             return original_read_json(path)
 
