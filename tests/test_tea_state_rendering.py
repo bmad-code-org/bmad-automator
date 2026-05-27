@@ -228,7 +228,7 @@ class TeaStateRenderingTests(unittest.TestCase):
         self.assertEqual(code, 0)
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["manualCheckpoints"], [])
-        self.assertIn("checkpoint-preview is out of scope", payload["notes"][0])
+        self.assertTrue(any("checkpoint-preview is out of scope" in note for note in payload["notes"]))
 
     def test_build_run_policy_rejects_invalid_explicit_override(self) -> None:
         stdout = io.StringIO()

@@ -139,7 +139,7 @@ def _review_step(skill_name: str) -> dict[str, object]:
 def _md5_hex8(text: str) -> str:
     import hashlib
 
-    return hashlib.md5(text.encode("utf-8")).hexdigest()[:8]
+    return hashlib.md5(text.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
 
 
 if __name__ == "__main__":

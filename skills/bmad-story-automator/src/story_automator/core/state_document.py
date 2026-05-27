@@ -142,13 +142,13 @@ def progress_metrics(text: str) -> dict[str, int]:
             continue
         if in_table and line.startswith("|"):
             parts = [part.strip() for part in line.split("|")]
-            values = [part for part in parts[1:-1] if part]
+            values = parts[1:-1]
             if len(values) >= 2:
-                first_cell = values[0]
+                first_cell = values[0].strip()
                 if re.fullmatch(r"-+", first_cell):
                     continue
                 total += 1
-                if any(token in values[-1].lower() for token in ("done", "complete", "completed")):
+                if values[-1].strip().lower() in {"done", "complete", "completed"}:
                     completed += 1
             continue
         if in_table and not line.startswith("|"):

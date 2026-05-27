@@ -44,6 +44,14 @@ def cmd_build_state_doc(args: list[str]) -> int:
     except json.JSONDecodeError:
         write_json({"ok": False, "error": "invalid_config_json"})
         return 1
+    if not isinstance(config, dict):
+        write_json({"ok": False, "error": "config_must_be_object"})
+        return 1
+    raw_story_range = config.get("storyRange", [])
+    if raw_story_range is not None and not isinstance(raw_story_range, list):
+        write_json({"ok": False, "error": "storyRange_must_be_array"})
+        return 1
+    story_range = [item for item in (raw_story_range or []) if isinstance(item, str)]
     ensure_dir(output_folder)
     now = now_utc_z()
     stamp = now_utc().strftime("%Y%m%d-%H%M%S")
@@ -59,7 +67,7 @@ def cmd_build_state_doc(args: list[str]) -> int:
     pinned_sequence = [step for step in ((snapshot["policy"].get("workflow") or {}).get("sequence") or []) if isinstance(step, str)]
     pinned_track = workflow_track_for_sequence(pinned_sequence)
     pinned_optional_steps = selected_optional_steps_from_sequence(pinned_sequence)
-    progress_header, progress_divider, progress_rows = progress_table_lines(snapshot["policy"], [item for item in config.get("storyRange", []) if isinstance(item, str)])
+    progress_header, progress_divider, progress_rows = progress_table_lines(snapshot["policy"], story_range)
     text = read_text(template)
     replacements: dict[str, Any] = {
         "epic": config.get("epic", ""),
@@ -171,7 +179,6 @@ def cmd_build_state_doc(args: list[str]) -> int:
         text = re.sub(r"(?m)^agentConfig:\n(?:(?:\s{2}.*\n)*)", block, text)
     for key, value in replacements.items():
         text = re.sub(rf"(?m)^{re.escape(key)}:.*$", lambda m, k=key, v=value: f"{k}: {json.dumps(v)}", text)
-    story_range = [item for item in config.get("storyRange", []) if isinstance(item, str)]
     body = {
         "{{epicName}}": str(config.get("epicName", "")),
         "{{epic}}": str(config.get("epic", "")),

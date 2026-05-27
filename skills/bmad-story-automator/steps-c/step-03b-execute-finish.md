@@ -112,15 +112,16 @@ wait "$epic_status_pid"
 epic_status=$(cat "$tmp_epic_status")
 rm -f "$tmp_epic_status"
 policy_sequence=$("{scriptsDir}" orchestrator-helper policy-sequence --state-file "{outputFile}")
-if ! echo "$policy_sequence" | jq -e '.ok == true and (.sequence | index("retro"))' >/dev/null; then
-    trigger_retro=false
+policy_has_retro=false
+if echo "$policy_sequence" | jq -e '.ok == true and (.sequence | index("retro"))' >/dev/null; then
+    policy_has_retro=true
 fi
 
 epic_complete=$(echo "$epic_status" | jq -r '.allStoriesDone')
 epic_ok=$(echo "$epic_status" | jq -r '.ok')
 
 # Both checks must pass
-if [ "$all_done" = "true" ] && [ "$epic_ok" = "true" ] && [ "$epic_complete" = "true" ]; then
+if [ "$policy_has_retro" = "true" ] && [ "$all_done" = "true" ] && [ "$epic_ok" = "true" ] && [ "$epic_complete" = "true" ]; then
     trigger_retro=true
 else
     trigger_retro=false
