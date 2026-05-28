@@ -33,6 +33,8 @@ class RuntimePolicyTests(unittest.TestCase):
         policy = load_effective_policy(str(self.project_root))
         self.assertEqual(policy["version"], 1)
         self.assertEqual(policy["steps"]["review"]["success"]["verifier"], "review_completion")
+        self.assertEqual(policy["steps"]["quick-dev"]["success"]["verifier"], "review_completion")
+        self.assertEqual(policy["steps"]["quick-dev"]["assets"]["files"]["skill"], "")
 
     def test_project_override_deep_merges_and_arrays_replace(self) -> None:
         self._write_override(

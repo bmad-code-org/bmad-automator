@@ -41,6 +41,23 @@ Implement all tasks marked [ ]. Run tests. Update checkboxes."' Enter
 
 ---
 
+## quick-dev
+
+```bash
+tmux send-keys -t "SESSION" 'codex exec "Execute the Quick Dev workflow for story STORY_ID.
+
+READ this skill first: <installed-skill-root>/bmad-quick-dev/SKILL.md
+READ this workflow file next: <installed-skill-root>/bmad-quick-dev/workflow.md
+Story file: _bmad-output/implementation-artifacts/STORY_PREFIX-*.md
+Use subagents for planning, implementation, test generation, and review where useful.
+Complete the story without prompting.
+Mark the story done only when no critical issues remain."' Enter
+```
+
+`quick-dev` is an experimental combined execution step. The monitor still verifies completion through the story/sprint-status done gate before Automator can commit.
+
+---
+
 ## code-review
 
 **MUST use the dedicated `bmad-story-automator-review` skill. Do NOT use a generic Task agent for reviews.**

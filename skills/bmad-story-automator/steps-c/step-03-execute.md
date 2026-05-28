@@ -71,7 +71,11 @@ state_file="{outputFile}"
 - REQUIRED patterns (verify state after each step)
 - Monitoring failure fallback sequence
 
-**Key rule:** Each step (create/dev/auto/review) MUST be executed and monitored separately. NEVER chain steps in loops.
+**Key rule:** Each step in the selected execution mode MUST be executed and monitored separately. NEVER chain steps in loops.
+
+**Execution modes:**
+- `split` (default): run create-story, dev-story, automate, and code-review as separate child sessions.
+- `quick-dev` (experimental): run one Quick Dev child session per story, then verify the same story/sprint-status completion gate before finalization.
 
 ## Story Loop
 
@@ -94,7 +98,7 @@ echo "- **[$(date -u +%Y-%m-%dT%H:%M:%SZ)]** Starting story {story_id}" >> "$sta
 
 # Initialize Story Progress row
 tmp_state=$(mktemp)
-awk -v row="| {story_id} | - | - | - | - | - | in-progress |" '
+awk -v row="| {story_id} | - | - | - | - | - | - | in-progress |" '
   /^<!-- Progress rows -->$/ { print row }
   { print }
 ' "$state_file" > "$tmp_state" && mv "$tmp_state" "$state_file"
@@ -120,6 +124,35 @@ If multiple logs exist, run one grep/regex pass across all log files and forward
 **Compact result contract (required):**
 - Return only: `next_action`, `confidence`, `error_class`, `retryable`, `reasons`, `session_id`
 - Do not pass full raw logs to parent flow unless escalation explicitly requires evidence payload
+
+### Quick Dev Mode
+
+If `overrides.executionMode == "quick-dev"`, skip sections A and B and run this section instead.
+
+```bash
+resolve_agent_for_task "quick-dev" "$state_file" "{story_id}"
+if should_apply_primary_model "$current_agent"; then
+  built_cmd=$("$scripts" tmux-wrapper build-cmd quick-dev {story_id} --agent "$current_agent" --model "$primary_model" --state-file "$state_file")
+else
+  built_cmd=$("$scripts" tmux-wrapper build-cmd quick-dev {story_id} --agent "$current_agent" --state-file "$state_file")
+fi
+session=$("$scripts" tmux-wrapper spawn quick-dev {epic} {story_id} \
+  --agent "$current_agent" \
+  --command "$built_cmd")
+result=$("$scripts" monitor-session "$session" --json --agent "$current_agent" --workflow quick-dev --story-key {story_id} --state-file "$state_file")
+"$scripts" tmux-wrapper kill "$session"
+validation=$("$scripts" orchestrator-helper verify-step quick-dev {story_id} --state-file "$state_file")
+parsed=$("$scripts" orchestrator-helper parse-output "$(printf '%s' "$result" | jq -r '.output_file')" quick-dev --state-file "$state_file")
+```
+
+- If `validation.verified == true`:
+  ```bash
+  tmp_state=$(mktemp)
+  sed "s/^| ${story_id} |.*$/| ${story_id} | - | - | done | - | done | - | in-progress |/" "$state_file" > "$tmp_state" && mv "$tmp_state" "$state_file"
+  ```
+  → skip `{nextStep}` and proceed directly to `step-03b-execute-finish.md`
+- If `validation.verified == false` AND attempts < 5 → retry with next agent (see `{retryStrategy}`)
+- If `validation.verified == false` AND attempts == 5 → escalate (all retries exhausted)
 
 ### A. Create Story
 *Skip if story file exists*
@@ -149,7 +182,7 @@ validation=$("$scripts" orchestrator-helper verify-step create {story_id} --stat
   ```bash
   # Update Story Progress: mark create-story done
   tmp_state=$(mktemp)
-  sed "s/^| ${story_id} |.*$/| ${story_id} | done | - | - | - | - | in-progress |/" "$state_file" > "$tmp_state" && mv "$tmp_state" "$state_file"
+  sed "s/^| ${story_id} |.*$/| ${story_id} | done | - | - | - | - | - | in-progress |/" "$state_file" > "$tmp_state" && mv "$tmp_state" "$state_file"
   ```
   → proceed to B
 - If `validation.verified == false` AND attempts < 5 → retry with next agent (see `{retryStrategy}`)
@@ -191,7 +224,7 @@ reasons=$(echo "$parsed" | jq -c '.reasons // []')
   ```bash
   # Update Story Progress: mark dev-story done
   tmp_state=$(mktemp)
-  sed "s/^| ${story_id} |.*$/| ${story_id} | done | done | - | - | - | in-progress |/" "$state_file" > "$tmp_state" && mv "$tmp_state" "$state_file"
+  sed "s/^| ${story_id} |.*$/| ${story_id} | done | done | - | - | - | - | in-progress |/" "$state_file" > "$tmp_state" && mv "$tmp_state" "$state_file"
   ```
   → proceed to C (next step)
 - If `next_action == "retry"` OR `result.final_state == "crashed"`:
@@ -200,6 +233,8 @@ reasons=$(echo "$parsed" | jq -c '.reasons // []')
   - Attempts == 5 → escalate (all retries exhausted)
 
 ## Auto-Proceed to Review Phase
+
+If `overrides.executionMode == "quick-dev"` and Quick Dev verification passed, skip this section and load `step-03b-execute-finish.md`.
 
 Display: "**Dev story complete. Proceeding to automate and code review...**"
 

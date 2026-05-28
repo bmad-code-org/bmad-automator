@@ -72,6 +72,7 @@ model=$(echo "$selection" | jq -r '.model // ""')
 | `dev` | Implement story tasks | Claude, Codex |
 | `auto` | Test automation | Claude, Codex |
 | `review` | Code review with auto-fix | Claude, Codex |
+| `quick-dev` | Combined planning, coding, tests, and review | Codex, Claude |
 | `retro` | Retrospective (YOLO mode) | Claude, Codex |
 
 ## Retrospective Commands (v1.5.0)

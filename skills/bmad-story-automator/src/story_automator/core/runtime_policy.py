@@ -10,7 +10,7 @@ from .runtime_layout import active_marker_path, bundled_story_skill_root, resolv
 from .utils import ensure_dir, get_project_root, iso_now, md5_hex8, read_text, write_atomic
 
 VALID_TOP_LEVEL_KEYS = {"version", "snapshot", "runtime", "workflow", "steps"}
-VALID_STEP_NAMES = {"create", "dev", "auto", "review", "retro"}
+VALID_STEP_NAMES = {"create", "dev", "auto", "review", "quick-dev", "retro"}
 VALID_VERIFIERS = {"create_story_artifact", "session_exit", "review_completion", "epic_complete"}
 VALID_ASSET_NAMES = {"skill", "workflow", "instructions", "checklist", "template"}
 VALID_PARSER_PROVIDERS = {"claude"}

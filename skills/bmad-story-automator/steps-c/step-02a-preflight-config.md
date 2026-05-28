@@ -140,7 +140,7 @@ config_json=$(jq -n \
   --arg currentStep "preflight" \
   --arg aiCommand "$agent_cmd" \
   --arg customInstructions "$custom_instructions" \
-  --argjson overrides "{\"skipAutomate\":$skip_automate,\"maxParallel\":$max_parallel}" \
+  --argjson overrides "{\"executionMode\":\"split\",\"skipAutomate\":$skip_automate,\"maxParallel\":$max_parallel}" \
   --argjson agentConfig "$agent_config_json" \
   '{epic:$epic,epicName:$epicName,storyRange:$storyRange,status:$status,currentStory:null,currentStep:$currentStep,aiCommand:$aiCommand,customInstructions:$customInstructions,overrides:$overrides,agentConfig:$agentConfig}'
 )

@@ -128,6 +128,8 @@ Story Automator automates the BMAD implementation loop for one or more stories:
 5. commit verified work
 6. trigger retrospective when an epic is fully complete
 
+Experimental quick-dev support is available as an alternate child step for environments that provide a `bmad-quick-dev` skill. In that mode the child workflow combines planning, coding, test generation, and review, while Automator still verifies story/sprint-status completion before commit.
+
 The core runtime model is:
 
 - one orchestrator session

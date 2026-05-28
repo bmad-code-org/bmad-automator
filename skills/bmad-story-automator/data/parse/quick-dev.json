@@ -1,0 +1,11 @@
+{
+  "requiredKeys": ["status", "story_done", "tests_passed", "critical_issues_remaining", "summary", "next_action"],
+  "schema": {
+    "status": "SUCCESS|FAILURE|AMBIGUOUS",
+    "story_done": "true|false",
+    "tests_passed": "true|false",
+    "critical_issues_remaining": "integer",
+    "summary": "brief description",
+    "next_action": "proceed|retry|escalate"
+  }
+}

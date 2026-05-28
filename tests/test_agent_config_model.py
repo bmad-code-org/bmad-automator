@@ -216,6 +216,8 @@ class CoreAgentConfigModelTests(unittest.TestCase):
             self.assertEqual(tasks["dev"]["model"], "claude-opus-4-7[1m]")
             self.assertNotIn("model", tasks["create"])
             self.assertNotIn("model", tasks["auto"])
+            self.assertIn("quick-dev", tasks)
+            self.assertNotIn("model", tasks["quick-dev"])
 
     def test_resolve_agents_returns_model(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -588,6 +590,16 @@ class BuildCmdModelFlagTests(unittest.TestCase):
         rendered = stdout.getvalue()
         self.assertNotIn("--model", rendered)
 
+    def test_build_cmd_renders_quick_dev_prompt(self) -> None:
+        stdout = io.StringIO()
+        with patch.dict(os.environ, {"PROJECT_ROOT": str(self.project_root), "AI_AGENT": "codex"}, clear=False), redirect_stdout(stdout):
+            code = _build_cmd(["quick-dev", "9.1", "--agent", "codex"])
+        self.assertEqual(code, 0)
+        rendered = stdout.getvalue()
+        self.assertIn("Execute the Quick Dev workflow for story 9.1.", rendered)
+        self.assertIn("READ this skill first: .claude/skills/bmad-quick-dev/SKILL.md", rendered)
+        self.assertIn("use subagents for planning, implementation, test generation, and review where useful", rendered)
+
     def _install_bundle(self) -> None:
         source_skill = REPO_ROOT / "skills" / "bmad-story-automator"
         source_review = REPO_ROOT / "skills" / "bmad-story-automator-review"
@@ -597,7 +609,7 @@ class BuildCmdModelFlagTests(unittest.TestCase):
         shutil.copytree(source_review, target_root / "bmad-story-automator-review")
 
     def _install_required_skills(self) -> None:
-        for name in ("bmad-create-story", "bmad-dev-story", "bmad-retrospective", "bmad-qa-generate-e2e-tests"):
+        for name in ("bmad-create-story", "bmad-dev-story", "bmad-retrospective", "bmad-qa-generate-e2e-tests", "bmad-quick-dev"):
             skill_dir = self.project_root / ".claude" / "skills" / name
             skill_dir.mkdir(parents=True, exist_ok=True)
             (skill_dir / "SKILL.md").write_text(f"# {name}\n", encoding="utf-8")

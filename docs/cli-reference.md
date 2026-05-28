@@ -71,6 +71,8 @@ Critical rule:
 
 These commands are the orchestration control plane.
 
+`tmux-wrapper build-cmd quick-dev <story-id>` is available as an experimental combined execution step when a `bmad-quick-dev` skill is installed. Monitor it with `monitor-session --workflow quick-dev --story-key <story-id>` so completion is verified against story/sprint-status artifacts.
+
 ## Agent Config Commands
 
 - `agent-config list`
