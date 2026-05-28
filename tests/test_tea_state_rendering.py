@@ -259,6 +259,24 @@ class TeaStateRenderingTests(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["error"], "config_must_be_object")
 
+    def test_build_state_doc_rejects_non_string_story_range_items(self) -> None:
+        stdout = io.StringIO()
+        template = self.project_root / ".claude" / "skills" / "bmad-story-automator" / "templates" / "state-document.md"
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_build_state_doc(
+                [
+                    "--template",
+                    str(template),
+                    "--output-folder",
+                    str(self.output_dir),
+                    "--config-json",
+                    json.dumps({**self._base_config(), "storyRange": ["1.1", 2]}),
+                ]
+            )
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["error"], "storyRange_must_be_array_of_strings")
+
     def test_build_run_policy_drops_nfr_when_nfr_skill_is_missing(self) -> None:
         install_tea_skills(self.project_root, canonical=True, write_assets=False)
         stdout = io.StringIO()

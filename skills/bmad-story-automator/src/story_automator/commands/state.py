@@ -51,7 +51,10 @@ def cmd_build_state_doc(args: list[str]) -> int:
     if raw_story_range is not None and not isinstance(raw_story_range, list):
         write_json({"ok": False, "error": "storyRange_must_be_array"})
         return 1
-    story_range = [item for item in (raw_story_range or []) if isinstance(item, str)]
+    if raw_story_range and any(not isinstance(item, str) for item in raw_story_range):
+        write_json({"ok": False, "error": "storyRange_must_be_array_of_strings"})
+        return 1
+    story_range = list(raw_story_range or [])
     ensure_dir(output_folder)
     now = now_utc_z()
     stamp = now_utc().strftime("%Y%m%d-%H%M%S")
@@ -72,7 +75,7 @@ def cmd_build_state_doc(args: list[str]) -> int:
     replacements: dict[str, Any] = {
         "epic": config.get("epic", ""),
         "epicName": config.get("epicName", ""),
-        "storyRange": config.get("storyRange", []),
+        "storyRange": story_range,
         "status": config.get("status", "READY"),
         "currentStory": config.get("currentStory"),
         "currentStep": config.get("currentStep"),
