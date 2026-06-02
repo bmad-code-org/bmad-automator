@@ -539,8 +539,9 @@ def _state_progress(args: list[str]) -> int:
 
     try:
         policy = load_runtime_policy(get_project_root(), state_file=state_file, resolve_assets=False)
-    except (FileNotFoundError, PolicyError):
-        policy = None
+    except (FileNotFoundError, PolicyError) as exc:
+        print_json({"ok": False, "error": "policy_invalid", "reason": str(exc)})
+        return 1
     ok, payload = update_story_progress(state_file, story_id, updates, policy=policy)
     if not ok:
         print_json(payload)

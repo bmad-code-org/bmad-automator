@@ -88,6 +88,9 @@ result=$("$scripts" monitor-session "$session" --json --agent "$current_agent")
 For each enabled TEA step:
 
 ```bash
+"$scripts" orchestrator-helper state-update "$state_file" \
+  --set currentStep={step} \
+  --set lastUpdated="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 resolve_agent_for_task "{step}" "$state_file" "{story_id}"
 if should_apply_primary_model "$current_agent"; then
   built_cmd=$("$scripts" tmux-wrapper build-cmd {step} {story_id} --agent "$current_agent" --model "$primary_model" --state-file "$state_file")
@@ -103,7 +106,14 @@ parsed=$("$scripts" orchestrator-helper parse-output "$(printf '%s' "$result" | 
 next_action=$(echo "$parsed" | jq -r '.next_action')
 ```
 
-- If `next_action == "proceed"` → continue to the next policy-defined step
+- If `next_action == "proceed"`:
+  ```bash
+  "$scripts" orchestrator-helper state-progress "$state_file" \
+    --story "${story_id}" \
+    --set {step}=done \
+    --set status=in-progress
+  ```
+  → continue to the next policy-defined step
 - If `next_action == "retry"` or the session crashes → apply the retry/fallback pattern
 - TEA v1 success for these steps means session execution completed successfully
 - When a TEA quality step completes, update only that named progress column via `state-progress` rather than rewriting the whole row

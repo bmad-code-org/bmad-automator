@@ -71,6 +71,54 @@ class OrchestratorProgressTests(unittest.TestCase):
         text = self.state_file.read_text(encoding="utf-8")
         self.assertIn("| 1.1 | done | done | ⏳ | pending |", text)
 
+    def test_state_progress_fails_when_any_requested_column_is_missing(self) -> None:
+        stdout = io.StringIO()
+        original = self.state_file.read_text(encoding="utf-8")
+        with patch.dict("os.environ", {"PROJECT_ROOT": self.tmp.name}), redirect_stdout(stdout):
+            code = cmd_orchestrator_helper(
+                [
+                    "state-progress",
+                    str(self.state_file),
+                    "--story",
+                    "1.1",
+                    "--set",
+                    "create=done",
+                    "--set",
+                    "atdd=done",
+                ]
+            )
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["error"], "progress_columns_not_found")
+        self.assertEqual(payload["missing"], ["atdd"])
+        self.assertEqual(self.state_file.read_text(encoding="utf-8"), original)
+
+    def test_state_progress_fails_closed_when_policy_snapshot_is_invalid(self) -> None:
+        self.state_file.write_text(
+            "\n".join(
+                [
+                    "---",
+                    'policySnapshotFile: "missing.json"',
+                    'policySnapshotHash: "deadbeef"',
+                    "---",
+                    "| Story | create-story | code-review | git-commit | Status |",
+                    "|-------|----------|----------|----------|----------|",
+                    "| 1.1 | ⏳ | ⏳ | ⏳ | pending |",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        stdout = io.StringIO()
+        with patch.dict("os.environ", {"PROJECT_ROOT": self.tmp.name}), redirect_stdout(stdout):
+            code = cmd_orchestrator_helper(
+                ["state-progress", str(self.state_file), "--story", "1.1", "--set", "status=done"]
+            )
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["error"], "policy_invalid")
+        self.assertIn("policy snapshot missing", payload["reason"])
+
     def test_policy_sequence_returns_pinned_sequence(self) -> None:
         snapshot_dir = Path(self.tmp.name) / "_bmad-output" / "story-automator" / "snapshots"
         snapshot_dir.mkdir(parents=True, exist_ok=True)

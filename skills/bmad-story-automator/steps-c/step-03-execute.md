@@ -106,6 +106,8 @@ echo "- **[$(date -u +%Y-%m-%dT%H:%M:%SZ)]** Starting story {story_id}" >> "$sta
 "$scripts" orchestrator-helper state-progress "$state_file" \
   --story "{story_id}" \
   --set status=in-progress
+
+policy_sequence=$("$scripts" orchestrator-helper policy-sequence --state-file "$state_file")
 ```
 
 Display: "**Story {N}/{total}: {title}**"
@@ -171,6 +173,9 @@ validation=$("$scripts" orchestrator-helper verify-step create {story_id} --stat
 Use the same spawn/monitor/parse pattern as other session-exit steps:
 
 ```bash
+"$scripts" orchestrator-helper state-update "$state_file" \
+  --set currentStep=atdd \
+  --set lastUpdated="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 resolve_agent_for_task "atdd" "$state_file" "{story_id}"
 if should_apply_primary_model "$current_agent"; then
   built_cmd=$("$scripts" tmux-wrapper build-cmd atdd {story_id} --agent "$current_agent" --model "$primary_model" --state-file "$state_file")
@@ -186,29 +191,50 @@ parsed=$("$scripts" orchestrator-helper parse-output "$(printf '%s' "$result" | 
 next_action=$(echo "$parsed" | jq -r '.next_action')
 ```
 
-- If `next_action == "proceed"` → continue to dev
+- If `next_action == "proceed"`:
+  ```bash
+  "$scripts" orchestrator-helper state-progress "$state_file" \
+    --story "${story_id}" \
+    --set atdd=done \
+    --set status=in-progress
+  ```
+  → continue to the next policy-defined step
 - If `next_action == "retry"` or session crashed → retry with fallback pattern
 - Treat successful completion as execution completion only; TEA artifact verification is not part of v1
 
 When updating progress, do not assume the standard fixed column order if TEA mode is active.
 
 ### B. Dev Story
+*Run only if the pinned policy sequence includes `dev`*
+
+If `dev` is not present in the pinned sequence, skip this phase entirely and proceed directly to the review phase transition below.
 
 **Apply retry/fallback pattern from `{retryStrategy}`:** Up to 5 attempts, alternating agents.
 
 ```bash
-# Retry loop with agent alternation: see {retryStrategy}
-resolve_agent_for_task "dev" "$state_file" "{story_id}"
-if should_apply_primary_model "$current_agent"; then
-  built_cmd=$("$scripts" tmux-wrapper build-cmd dev {story_id} --agent "$current_agent" --model "$primary_model" --state-file "$state_file")
+dev_in_scope=false
+if echo "$policy_sequence" | jq -e '.ok == true and (.sequence | index("dev"))' >/dev/null; then
+  dev_in_scope=true
 else
-  built_cmd=$("$scripts" tmux-wrapper build-cmd dev {story_id} --agent "$current_agent" --state-file "$state_file")
+  echo "[story {N}/{total}] dev -> skipped (not in policy sequence)"
 fi
-session=$("$scripts" tmux-wrapper spawn dev {epic} {story_id} \
-  --agent "$current_agent" \
-  --command "$built_cmd")
-result=$("$scripts" monitor-session "$session" --json --agent "$current_agent")
-"$scripts" tmux-wrapper kill "$session"
+if [ "$dev_in_scope" = "true" ]; then
+  # Retry loop with agent alternation: see {retryStrategy}
+  "$scripts" orchestrator-helper state-update "$state_file" \
+    --set currentStep=dev \
+    --set lastUpdated="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  resolve_agent_for_task "dev" "$state_file" "{story_id}"
+  if should_apply_primary_model "$current_agent"; then
+    built_cmd=$("$scripts" tmux-wrapper build-cmd dev {story_id} --agent "$current_agent" --model "$primary_model" --state-file "$state_file")
+  else
+    built_cmd=$("$scripts" tmux-wrapper build-cmd dev {story_id} --agent "$current_agent" --state-file "$state_file")
+  fi
+  session=$("$scripts" tmux-wrapper spawn dev {epic} {story_id} \
+    --agent "$current_agent" \
+    --command "$built_cmd")
+  result=$("$scripts" monitor-session "$session" --json --agent "$current_agent")
+  "$scripts" tmux-wrapper kill "$session"
+fi
 ```
 
 **Session Parsing Contract (required):**
@@ -217,14 +243,19 @@ result=$("$scripts" monitor-session "$session" --json --agent "$current_agent")
 - Return normalized schema only: `next_action`, `confidence`, `error_class`, `reasons`
 
 ```bash
-parsed=$("$scripts" orchestrator-helper parse-output "$(printf '%s' "$result" | jq -r '.output_file')" dev)
-next_action=$(echo "$parsed" | jq -r '.next_action')
-confidence=$(echo "$parsed" | jq -r '.confidence // 0.0')
-error_class=$(echo "$parsed" | jq -r '.error_class // "none"')
-reasons=$(echo "$parsed" | jq -c '.reasons // []')
+if [ "$dev_in_scope" = "true" ]; then
+  parsed=$("$scripts" orchestrator-helper parse-output "$(printf '%s' "$result" | jq -r '.output_file')" dev --state-file "$state_file")
+  next_action=$(echo "$parsed" | jq -r '.next_action')
+  confidence=$(echo "$parsed" | jq -r '.confidence // 0.0')
+  error_class=$(echo "$parsed" | jq -r '.error_class // "none"')
+  reasons=$(echo "$parsed" | jq -c '.reasons // []')
+else
+  next_action="proceed"
+fi
 ```
 
-- If `next_action == "proceed"`:
+- If `dev_in_scope == "false"` → skip directly to C (next step)
+- If `dev_in_scope == "true"` and `next_action == "proceed"`:
   ```bash
   # Update Story Progress: mark dev-story done
   "$scripts" orchestrator-helper state-progress "$state_file" \
@@ -233,7 +264,7 @@ reasons=$(echo "$parsed" | jq -c '.reasons // []')
     --set status=in-progress
   ```
   → proceed to C (next step)
-- If `next_action == "retry"` OR `result.final_state == "crashed"`:
+- If `dev_in_scope == "true"` and (`next_action == "retry"` OR `result.final_state == "crashed"`):
   - Attempts < 5 → retry with next agent (see `{retryStrategy}`)
   - Plateau detected (same task 3x) → DEFER story, continue to next
   - Attempts == 5 → escalate (all retries exhausted)

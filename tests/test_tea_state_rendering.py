@@ -105,7 +105,7 @@ class TeaStateRenderingTests(unittest.TestCase):
         self.assertIn('selectedOptionalSteps: ["nfr"]', text)
         self.assertIn('manualCheckpoints: []', text)
         self.assertIn("**TEA Configuration:**", text)
-        self.assertIn("- Mandatory TEA Core: atdd, test_automate, test_review, trace", text)
+        self.assertIn("- Pinned TEA Steps: atdd, test-automate, test-review, nfr, trace", text)
         self.assertIn(
             "| Story | create-story | atdd | dev-story | test-automate | test-review | nfr | trace | code-review | git-commit | Status |",
             text,
@@ -126,18 +126,21 @@ class TeaStateRenderingTests(unittest.TestCase):
         self.assertNotIn("**TEA Configuration:**", text)
         self.assertIn("| Story | create-story | dev-story | automate | code-review | git-commit | Status |", text)
 
-    def test_build_state_doc_legacy_config_stays_standard_despite_explicit_tea_override(self) -> None:
+    def test_build_state_doc_legacy_config_preserves_explicit_tea_override(self) -> None:
         install_tea_skills(self.project_root, canonical=True)
         self._write_policy_override(
             {
                 "workflow": {"sequence": ["create", "atdd", "dev", "test_automate", "test_review", "trace", "review"]},
-                "steps": tea_steps_override(),
+                "steps": tea_steps_override(canonical=True),
             }
         )
         state_file = self._build_state()
         text = state_file.read_text(encoding="utf-8")
-        self.assertNotIn("**TEA Configuration:**", text)
-        self.assertIn("| Story | create-story | dev-story | automate | code-review | git-commit | Status |", text)
+        self.assertIn("**TEA Configuration:**", text)
+        self.assertIn(
+            "| Story | create-story | atdd | dev-story | test-automate | test-review | trace | code-review | git-commit | Status |",
+            text,
+        )
 
     def test_build_state_doc_uses_pinned_standard_override_metadata_for_explicit_policy_override(self) -> None:
         state_file = self._build_state(

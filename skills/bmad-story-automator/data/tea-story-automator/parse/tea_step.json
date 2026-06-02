@@ -3,6 +3,6 @@
   "schema": {
     "status": "SUCCESS|FAILURE|AMBIGUOUS",
     "summary": "brief description",
-    "next_action": "proceed|retry|escalate"
+    "next_action": "proceed|retry"
   }
 }

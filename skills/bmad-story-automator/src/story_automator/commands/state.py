@@ -13,6 +13,11 @@ from ..core.tea_policy import build_run_policy, detect_workflow_track, selected_
 from ..core.utils import count_matches, ensure_dir, file_exists, get_project_root, now_utc, now_utc_z, read_text, write_json
 
 
+def _tea_summary_steps(sequence: list[str]) -> list[str]:
+    tea_steps = {"atdd", "test_automate", "test_review", "nfr", "trace"}
+    return [step.replace("_", "-") for step in sequence if step in tea_steps]
+
+
 def cmd_build_state_doc(args: list[str]) -> int:
     template = ""
     output_folder = ""
@@ -193,9 +198,10 @@ def cmd_build_state_doc(args: list[str]) -> int:
     }
     tea_block = ""
     if pinned_track == "tea":
+        pinned_tea_steps = _tea_summary_steps(pinned_sequence)
         tea_block_lines = [
             "**TEA Configuration:**",
-            "- Mandatory TEA Core: atdd, test_automate, test_review, trace",
+            f"- Pinned TEA Steps: {', '.join(pinned_tea_steps) or 'none'}",
             f"- Optional Automated Steps: {', '.join(pinned_optional_steps) or 'none'}",
             f"- Policy Notes: {'; '.join(policy_selection['notes']) or 'none'}",
             "",

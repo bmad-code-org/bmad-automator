@@ -87,6 +87,14 @@ class TeaDetectionTests(unittest.TestCase):
         self.assertFalse(payload["explicitTeaPolicy"])
         self.assertTrue(any("explicit standard story-automator policy override" in note for note in payload["reasons"]))
 
+    def test_detect_workflow_track_rejects_invalid_explicit_standard_override(self) -> None:
+        self._write_policy_override({"workflow": {"sequence": ["create", "bogus", "review"]}})
+        payload = self._detect()
+        self.assertEqual(payload["recommendedTrack"], "standard")
+        self.assertFalse(payload["teaCapable"])
+        self.assertTrue(any("explicit standard story-automator policy override, but it is invalid" in note for note in payload["reasons"]))
+        self.assertTrue(any("workflow.sequence references missing step: bogus" in note for note in payload["reasons"]))
+
     def test_detect_workflow_track_honors_explicit_tea_policy(self) -> None:
         install_tea_skills(self.project_root)
         self._write_policy_override(

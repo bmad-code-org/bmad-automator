@@ -111,7 +111,7 @@ def write_tea_assets(project_root: Path, *, root: Path | None = None) -> None:
                     "status": "SUCCESS|FAILURE|AMBIGUOUS",
                     "failing_tests_created": "true|false",
                     "summary": "brief description",
-                    "next_action": "proceed|retry|escalate",
+                    "next_action": "proceed|retry",
                 },
             }
         ),
@@ -125,7 +125,7 @@ def write_tea_assets(project_root: Path, *, root: Path | None = None) -> None:
                     "status": "SUCCESS|FAILURE|AMBIGUOUS",
                     "tests_added": "integer",
                     "summary": "brief description",
-                    "next_action": "proceed|retry|escalate",
+                    "next_action": "proceed|retry",
                 },
             }
         ),
@@ -139,7 +139,7 @@ def write_tea_assets(project_root: Path, *, root: Path | None = None) -> None:
                     "status": "SUCCESS|FAILURE|AMBIGUOUS",
                     "issues_found": "integer",
                     "summary": "brief description",
-                    "next_action": "proceed|retry|escalate",
+                    "next_action": "proceed|retry",
                 },
             }
         ),
@@ -153,7 +153,7 @@ def write_tea_assets(project_root: Path, *, root: Path | None = None) -> None:
                     "status": "SUCCESS|FAILURE|AMBIGUOUS",
                     "nfr_report_created": "true|false",
                     "summary": "brief description",
-                    "next_action": "proceed|retry|escalate",
+                    "next_action": "proceed|retry",
                 },
             }
         ),
@@ -167,7 +167,7 @@ def write_tea_assets(project_root: Path, *, root: Path | None = None) -> None:
                     "status": "SUCCESS|FAILURE|AMBIGUOUS",
                     "trace_updated": "true|false",
                     "summary": "brief description",
-                    "next_action": "proceed|retry|escalate",
+                    "next_action": "proceed|retry",
                 },
             }
         ),

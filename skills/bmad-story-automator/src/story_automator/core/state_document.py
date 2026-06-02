@@ -108,6 +108,7 @@ def update_story_progress(state_file: str | Path, story_id: str, updates: dict[s
 
     header_map = {name: pos for pos, name in enumerate(headers)}
     applied: list[str] = []
+    unresolved: list[str] = []
     for key, value in updates.items():
         normalized_key = normalize_progress_key(key, policy)
         if normalized_key == "story":
@@ -117,9 +118,12 @@ def update_story_progress(state_file: str | Path, story_id: str, updates: dict[s
             return False, {"ok": False, "error": "invalid_progress_value", "argument": f"{key}={value}"}
         pos = header_map.get(normalized_key)
         if pos is None:
+            unresolved.append(normalized_key)
             continue
         story_cells[pos] = sanitized
         applied.append(normalized_key)
+    if unresolved:
+        return False, {"ok": False, "error": "progress_columns_not_found", "missing": unresolved}
     if not applied:
         return False, {"ok": False, "error": "progress_columns_not_found"}
     lines[story_idx] = render_markdown_row(story_cells)

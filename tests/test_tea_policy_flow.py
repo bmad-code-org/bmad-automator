@@ -62,6 +62,17 @@ class TeaPolicyFlowTests(unittest.TestCase):
         policy = load_policy_for_state(state_file, project_root=str(self.project_root))
         self.assertEqual(policy["workflow"]["sequence"], ["create", "dev", "review"])
 
+    def test_build_state_doc_preserves_explicit_standard_override_with_standard_track_selection(self) -> None:
+        override_dir = self.project_root / "_bmad" / "bmm"
+        override_dir.mkdir(parents=True, exist_ok=True)
+        (override_dir / "story-automator.policy.json").write_text(
+            json.dumps({"workflow": {"sequence": ["create", "dev", "review"]}}),
+            encoding="utf-8",
+        )
+        state_file = self._build_state({"workflowTrack": "standard", "selectedOptionalSteps": []})
+        policy = load_policy_for_state(state_file, project_root=str(self.project_root))
+        self.assertEqual(policy["workflow"]["sequence"], ["create", "dev", "review"])
+
     def test_build_state_doc_preserves_explicit_project_tea_policy(self) -> None:
         install_tea_skills(self.project_root, canonical=True, write_assets=False)
         override_dir = self.project_root / "_bmad" / "bmm"
@@ -105,6 +116,93 @@ class TeaPolicyFlowTests(unittest.TestCase):
         policy = load_policy_for_state(state_file, project_root=str(self.project_root))
         self.assertEqual(policy["workflow"]["sequence"], ["create", "atdd", "dev", "trace", "review"])
         self.assertEqual(policy["steps"]["atdd"]["label"], "acceptance-tests")
+
+    def test_build_state_doc_preserves_explicit_project_tea_policy_without_track_selection(self) -> None:
+        install_tea_skills(self.project_root, canonical=True, write_assets=False)
+        override_dir = self.project_root / "_bmad" / "bmm"
+        override_dir.mkdir(parents=True, exist_ok=True)
+        override = {
+            "workflow": {"sequence": ["create", "atdd", "dev", "trace", "review"]},
+            "steps": {
+                "atdd": {
+                    "label": "acceptance-tests",
+                    "assets": {
+                        "skillName": "bmad-testarch-atdd",
+                        "workflowCandidates": ["workflow.md", "workflow.yaml"],
+                        "instructionsCandidates": [],
+                        "checklistCandidates": ["checklist.md"],
+                        "templateCandidates": [],
+                        "required": ["skill"],
+                    },
+                    "prompt": {"templateFile": "data/tea-story-automator/prompts/tea_step.md", "interactionMode": "autonomous"},
+                    "parse": {"schemaFile": "data/tea-story-automator/parse/tea_step.json"},
+                    "success": {"verifier": "session_exit"},
+                },
+                "trace": {
+                    "label": "trace",
+                    "assets": {
+                        "skillName": "bmad-testarch-trace",
+                        "workflowCandidates": ["workflow.md", "workflow.yaml"],
+                        "instructionsCandidates": [],
+                        "checklistCandidates": ["checklist.md"],
+                        "templateCandidates": [],
+                        "required": ["skill"],
+                    },
+                    "prompt": {"templateFile": "data/tea-story-automator/prompts/tea_step.md", "interactionMode": "autonomous"},
+                    "parse": {"schemaFile": "data/tea-story-automator/parse/tea_step.json"},
+                    "success": {"verifier": "session_exit"},
+                },
+            },
+        }
+        (override_dir / "story-automator.policy.json").write_text(json.dumps(override), encoding="utf-8")
+
+        state_file = self._build_state()
+        policy = load_policy_for_state(state_file, project_root=str(self.project_root))
+        self.assertEqual(policy["workflow"]["sequence"], ["create", "atdd", "dev", "trace", "review"])
+
+    def test_build_state_doc_renders_tea_summary_from_pinned_sequence(self) -> None:
+        install_tea_skills(self.project_root, canonical=True, write_assets=False)
+        override_dir = self.project_root / "_bmad" / "bmm"
+        override_dir.mkdir(parents=True, exist_ok=True)
+        override = {
+            "workflow": {"sequence": ["create", "atdd", "dev", "trace", "review"]},
+            "steps": {
+                "atdd": {
+                    "label": "acceptance-tests",
+                    "assets": {
+                        "skillName": "bmad-testarch-atdd",
+                        "workflowCandidates": ["workflow.md", "workflow.yaml"],
+                        "instructionsCandidates": [],
+                        "checklistCandidates": ["checklist.md"],
+                        "templateCandidates": [],
+                        "required": ["skill"],
+                    },
+                    "prompt": {"templateFile": "data/tea-story-automator/prompts/tea_step.md", "interactionMode": "autonomous"},
+                    "parse": {"schemaFile": "data/tea-story-automator/parse/tea_step.json"},
+                    "success": {"verifier": "session_exit"},
+                },
+                "trace": {
+                    "label": "trace",
+                    "assets": {
+                        "skillName": "bmad-testarch-trace",
+                        "workflowCandidates": ["workflow.md", "workflow.yaml"],
+                        "instructionsCandidates": [],
+                        "checklistCandidates": ["checklist.md"],
+                        "templateCandidates": [],
+                        "required": ["skill"],
+                    },
+                    "prompt": {"templateFile": "data/tea-story-automator/prompts/tea_step.md", "interactionMode": "autonomous"},
+                    "parse": {"schemaFile": "data/tea-story-automator/parse/tea_step.json"},
+                    "success": {"verifier": "session_exit"},
+                },
+            },
+        }
+        (override_dir / "story-automator.policy.json").write_text(json.dumps(override), encoding="utf-8")
+
+        state_file = self._build_state()
+        text = state_file.read_text(encoding="utf-8")
+        self.assertIn("- Pinned TEA Steps: atdd, trace", text)
+        self.assertNotIn("- Mandatory TEA Core: atdd, test_automate, test_review, trace", text)
 
     def test_bundled_tea_adapter_contract_supports_build_and_parse_for_all_steps(self) -> None:
         install_tea_skills(self.project_root, canonical=True, include_nfr=True, write_assets=False)
