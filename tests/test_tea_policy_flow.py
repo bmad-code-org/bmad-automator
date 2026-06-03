@@ -36,6 +36,28 @@ class TeaPolicyFlowTests(unittest.TestCase):
         self.assertEqual(payload["error"], "policy_invalid")
         self.assertIn("bmad-testarch-atdd", payload["reason"])
 
+    def test_build_run_policy_rejects_unknown_workflow_track(self) -> None:
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_build_run_policy(["--config-json", json.dumps({"workflowTrack": "teaa"})])
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["error"], "policy_invalid")
+        self.assertIn("unknown workflowTrack: teaa", payload["reason"])
+
+    def test_generated_policy_override_remains_portable_after_validation(self) -> None:
+        install_tea_skills(self.project_root, canonical=True, write_assets=False)
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_build_run_policy(["--config-json", json.dumps({"workflowTrack": "tea"})])
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        atdd = payload["policyOverride"]["steps"]["atdd"]
+        self.assertNotIn("templatePath", atdd["prompt"])
+        self.assertNotIn("schemaPath", atdd["parse"])
+        self.assertNotIn("templateHash", atdd["prompt"])
+        self.assertNotIn("schemaHash", atdd["parse"])
+
     def test_detect_workflow_track_keeps_standard_override_out_of_tea_detection(self) -> None:
         override_dir = self.project_root / "_bmad" / "bmm"
         override_dir.mkdir(parents=True, exist_ok=True)
@@ -203,6 +225,32 @@ class TeaPolicyFlowTests(unittest.TestCase):
         text = state_file.read_text(encoding="utf-8")
         self.assertIn("- Pinned TEA Steps: atdd, trace", text)
         self.assertNotIn("- Mandatory TEA Core: atdd, test_automate, test_review, trace", text)
+
+    def test_build_state_doc_rejects_duplicate_story_ids(self) -> None:
+        stdout = io.StringIO()
+        template = self.project_root / ".claude" / "skills" / "bmad-story-automator" / "templates" / "state-document.md"
+        config = {
+            "epic": "1",
+            "epicName": "Epic 1",
+            "storyRange": ["1.1", "1.1"],
+            "status": "READY",
+            "aiCommand": "claude --dangerously-skip-permissions",
+        }
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_build_state_doc(
+                [
+                    "--template",
+                    str(template),
+                    "--output-folder",
+                    str(self.output_dir),
+                    "--config-json",
+                    json.dumps(config),
+                ]
+            )
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["error"], "storyRange_contains_duplicates")
+        self.assertEqual(payload["duplicates"], ["1.1"])
 
     def test_bundled_tea_adapter_contract_supports_build_and_parse_for_all_steps(self) -> None:
         install_tea_skills(self.project_root, canonical=True, include_nfr=True, write_assets=False)

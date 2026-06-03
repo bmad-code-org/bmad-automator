@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +27,7 @@ TEA_TRACK_DEFINITION = {
 def build_run_policy(project_root: Path, config: dict[str, Any]) -> dict[str, Any]:
     explicit_override = config.get("policyOverride")
     if isinstance(explicit_override, dict):
-        resolved = load_effective_policy(str(project_root), inline_override=explicit_override)
+        resolved = load_effective_policy(str(project_root), inline_override=_policy_copy(explicit_override))
         sequence = [step for step in ((resolved.get("workflow") or {}).get("sequence") or []) if isinstance(step, str)]
         track = workflow_track_for_sequence(sequence)
         notes = _normalize_string_list(config.get("policyNotes"))
@@ -41,9 +42,8 @@ def build_run_policy(project_root: Path, config: dict[str, Any]) -> dict[str, An
         }
 
     explicit_override_payload, explicit_override_error = explicit_policy_payload(project_root)
-    explicit_override_sequence = [
-        step for step in (((explicit_override_payload.get("workflow") or {}).get("sequence")) or []) if isinstance(step, str)
-    ]
+    explicit_override_sequence, explicit_override_shape_error = explicit_policy_sequence(explicit_override_payload)
+    explicit_override_error = explicit_override_error or explicit_override_shape_error
     explicit_override_track = workflow_track_for_sequence(explicit_override_sequence) if explicit_override_payload else "standard"
     explicit_override_resolved, explicit_override_validation_error = explicit_project_policy_details(
         project_root, explicit_override_payload
@@ -72,7 +72,7 @@ def build_run_policy(project_root: Path, config: dict[str, Any]) -> dict[str, An
 
     track = str(config.get("workflowTrack") or "standard").strip().lower()
     if track not in {"standard", "tea"}:
-        track = "standard"
+        raise PolicyError(f"unknown workflowTrack: {track}")
     selected = set(_normalize_option_list(config.get("selectedOptionalSteps")))
     manual = set(_normalize_option_list(config.get("manualCheckpoints")))
     notes: list[str] = []
@@ -164,7 +164,7 @@ def build_run_policy(project_root: Path, config: dict[str, Any]) -> dict[str, An
         "manualCheckpoints": [],
         "notes": notes,
     }
-    load_effective_policy(str(project_root), inline_override=selection["policyOverride"])
+    load_effective_policy(str(project_root), inline_override=_policy_copy(selection["policyOverride"]))
     return selection
 
 
@@ -172,9 +172,8 @@ def detect_workflow_track(project_root: Path) -> dict[str, Any]:
     signals = tea_project_signals(project_root)
     explicit_override_present, explicit_override_stat_error = path_is_file(explicit_policy_path(project_root))
     explicit_override_payload, explicit_override_error = explicit_policy_payload(project_root)
-    explicit_override_sequence = [
-        step for step in (((explicit_override_payload.get("workflow") or {}).get("sequence")) or []) if isinstance(step, str)
-    ]
+    explicit_override_sequence, explicit_override_shape_error = explicit_policy_sequence(explicit_override_payload)
+    explicit_override_error = explicit_override_error or explicit_override_shape_error
     explicit_override_track = workflow_track_for_sequence(explicit_override_sequence) if explicit_override_payload else "standard"
     explicit_override_resolved, explicit_override_validation_error = explicit_project_policy_details(
         project_root, explicit_override_payload
@@ -297,7 +296,7 @@ def explicit_policy_payload(project_root: Path) -> tuple[dict[str, Any], str]:
 
 def explicit_tea_steps(project_root: Path) -> list[str]:
     payload, _ = explicit_policy_payload(project_root)
-    sequence = ((payload.get("workflow") or {}).get("sequence")) or []
+    sequence, _ = explicit_policy_sequence(payload)
     tea_steps = {"atdd", "test_automate", "test_review", "trace", "nfr"}
     return [step for step in sequence if isinstance(step, str) and step in tea_steps]
 
@@ -356,9 +355,16 @@ def tea_assets_base_path(project_root: Path, assets_root: str) -> Path | None:
             candidates.append((bundle_root / raw).resolve())
         except FileNotFoundError:
             pass
+    first_existing: Path | None = None
     for candidate in candidates:
-        if candidate.exists():
+        if not candidate.exists():
+            continue
+        if first_existing is None:
+            first_existing = candidate
+        if tea_assets_complete_for_base(candidate):
             return candidate
+    if first_existing is not None:
+        return first_existing
     return candidates[0] if candidates else None
 
 
@@ -543,7 +549,7 @@ def resolved_explicit_tea_status(policy: dict[str, Any], required_steps: list[st
 
 
 def explicit_tea_assets_status(project_root: Path, payload: dict[str, Any], required_steps: list[str]) -> tuple[str, list[str]]:
-    steps = payload.get("steps") or {}
+    steps = payload.get("steps") if isinstance(payload.get("steps"), dict) else {}
     asset_roots: list[str] = []
     missing_assets: list[str] = []
     for step in required_steps:
@@ -588,3 +594,21 @@ def _as_bool(value: Any, default: bool = False) -> bool:
         if lowered in {"0", "false", "no", "n", "off"}:
             return False
     return default
+
+
+def explicit_policy_sequence(payload: dict[str, Any]) -> tuple[list[str], str]:
+    if not payload:
+        return [], ""
+    workflow = payload.get("workflow")
+    if workflow is None:
+        return [], ""
+    if not isinstance(workflow, dict):
+        return [], "explicit story-automator policy workflow must be an object"
+    sequence = workflow.get("sequence") or []
+    if not isinstance(sequence, list) or any(not isinstance(item, str) for item in sequence):
+        return [], "explicit story-automator policy workflow.sequence must be a string array"
+    return list(sequence), ""
+
+
+def _policy_copy(payload: dict[str, Any]) -> dict[str, Any]:
+    return deepcopy(payload)

@@ -50,7 +50,7 @@ def load_effective_policy(
         raise PolicyError(f"project override unreadable: {override_path}") from exc
     policy = _deep_merge(_deep_merge(bundled, override), inline_override or {})
     _apply_legacy_env(policy)
-    _validate_policy_step_references(policy)
+    _validate_policy_shape(policy)
     _prune_unreferenced_steps(policy)
     _validate_policy_shape(policy)
     _clear_resolved_fields(policy)
@@ -261,7 +261,7 @@ def _load_bundled_policy_shape(project_root: str | Path | None = None) -> dict[s
         policy = _read_json(policy_path)
     except OSError as exc:
         raise PolicyError(f"policy unreadable: {policy_path}") from exc
-    _validate_policy_step_references(policy)
+    _validate_policy_shape(policy)
     _prune_unreferenced_steps(policy)
     _validate_policy_shape(policy)
     return policy
@@ -279,7 +279,7 @@ def _load_policy_snapshot_shape(path: Path, *, expected_hash: str = "") -> dict[
         policy = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise PolicyError(f"policy json invalid: {path}") from exc
-    _validate_policy_step_references(policy)
+    _validate_policy_shape(policy)
     _prune_unreferenced_steps(policy)
     _validate_policy_shape(policy)
     return policy
@@ -393,6 +393,11 @@ def _validate_policy_shape(policy: dict[str, Any]) -> None:
     sequence = (workflow.get("sequence")) or []
     if not isinstance(sequence, list) or not all(isinstance(item, str) for item in sequence):
         raise PolicyError("workflow.sequence must be a string array")
+    if "review" not in sequence:
+        raise PolicyError("workflow.sequence must include review")
+    duplicates = sorted({step for step in sequence if sequence.count(step) > 1})
+    if duplicates:
+        raise PolicyError(f"workflow.sequence contains duplicate steps: {', '.join(duplicates)}")
     if "maxCycles" in review and not isinstance(review.get("maxCycles"), int):
         raise PolicyError("workflow.repeat.review.maxCycles must be an integer")
     if "maxRetries" in crash and not isinstance(crash.get("maxRetries"), int):
@@ -410,6 +415,9 @@ def _validate_policy_shape(policy: dict[str, Any]) -> None:
         verifier = str(((contract.get("success") or {}).get("verifier")) or "")
         if verifier not in VALID_VERIFIERS:
             raise PolicyError(f"invalid verifier for {name}: {verifier}")
+        label = contract.get("label")
+        if label is not None and (not isinstance(label, str) or any(ch in label for ch in ("|", "\n", "\r"))):
+            raise PolicyError(f"invalid label for {name}")
         required = (assets.get("required")) or []
         if not isinstance(required, list) or any(item not in VALID_ASSET_NAMES for item in required):
             raise PolicyError(f"invalid required assets for {name}")

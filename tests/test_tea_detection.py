@@ -71,6 +71,16 @@ class TeaDetectionTests(unittest.TestCase):
         self.assertEqual(payload["assetsRoot"], "data/tea-story-automator")
         self.assertEqual(payload["missingAssets"], [])
 
+    def test_detect_workflow_track_falls_back_when_project_data_assets_are_incomplete(self) -> None:
+        install_tea_skills(self.project_root, canonical=True, write_assets=False)
+        incomplete_dir = self.project_root / "data" / "tea-story-automator" / "prompts"
+        incomplete_dir.mkdir(parents=True, exist_ok=True)
+        payload = self._detect()
+        self.assertEqual(payload["recommendedTrack"], "tea")
+        self.assertTrue(payload["teaCapable"])
+        self.assertEqual(payload["assetsRoot"], "data/tea-story-automator")
+        self.assertEqual(payload["missingAssets"], [])
+
     def test_detect_workflow_track_stays_standard_when_skills_are_missing(self) -> None:
         write_tea_assets(self.project_root)
         payload = self._detect()
@@ -94,6 +104,13 @@ class TeaDetectionTests(unittest.TestCase):
         self.assertFalse(payload["teaCapable"])
         self.assertTrue(any("explicit standard story-automator policy override, but it is invalid" in note for note in payload["reasons"]))
         self.assertTrue(any("workflow.sequence references missing step: bogus" in note for note in payload["reasons"]))
+
+    def test_detect_workflow_track_rejects_malformed_explicit_standard_override_shape(self) -> None:
+        self._write_policy_override({"workflow": "x"})
+        payload = self._detect()
+        self.assertEqual(payload["recommendedTrack"], "standard")
+        self.assertFalse(payload["teaCapable"])
+        self.assertTrue(any("workflow must be an object" in note for note in payload["reasons"]))
 
     def test_detect_workflow_track_honors_explicit_tea_policy(self) -> None:
         install_tea_skills(self.project_root)
@@ -192,7 +209,7 @@ class TeaDetectionTests(unittest.TestCase):
                 "workflow": {
                     "sequence": ["create", "atdd", "dev", "test_automate", "test_review", "nfr", "trace", "review"]
                 },
-                "steps": tea_steps_override(include_nfr=True),
+                "steps": tea_steps_override(canonical=True, include_nfr=True),
             }
         )
         payload = self._detect()

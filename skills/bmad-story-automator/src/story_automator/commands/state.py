@@ -60,6 +60,10 @@ def cmd_build_state_doc(args: list[str]) -> int:
         write_json({"ok": False, "error": "storyRange_must_be_array_of_strings"})
         return 1
     story_range = list(raw_story_range or [])
+    duplicate_story_ids = sorted({item for item in story_range if story_range.count(item) > 1})
+    if duplicate_story_ids:
+        write_json({"ok": False, "error": "storyRange_contains_duplicates", "duplicates": duplicate_story_ids})
+        return 1
     ensure_dir(output_folder)
     now = now_utc_z()
     stamp = now_utc().strftime("%Y%m%d-%H%M%S")

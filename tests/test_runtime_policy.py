@@ -61,6 +61,36 @@ class RuntimePolicyTests(unittest.TestCase):
         with self.assertRaises(PolicyError):
             load_effective_policy(str(self.project_root))
 
+    def test_policy_sequence_requires_review(self) -> None:
+        self._write_override({"workflow": {"sequence": ["create", "dev"]}})
+        with self.assertRaisesRegex(PolicyError, "workflow.sequence must include review"):
+            load_effective_policy(str(self.project_root))
+
+    def test_duplicate_workflow_sequence_entries_rejected(self) -> None:
+        self._write_override({"workflow": {"sequence": ["create", "dev", "dev", "review"]}})
+        with self.assertRaisesRegex(PolicyError, "workflow.sequence contains duplicate steps: dev"):
+            load_effective_policy(str(self.project_root))
+
+    def test_invalid_unreferenced_step_definition_is_rejected_before_pruning(self) -> None:
+        self._write_override(
+            {
+                "workflow": {"sequence": ["create", "dev", "review"]},
+                "steps": {"typo_step": {"success": {"verifier": "nope"}}},
+            }
+        )
+        with self.assertRaisesRegex(PolicyError, "unknown step names: typo_step"):
+            load_effective_policy(str(self.project_root))
+
+    def test_invalid_unreferenced_known_step_definition_is_rejected_before_pruning(self) -> None:
+        self._write_override(
+            {
+                "workflow": {"sequence": ["create", "dev", "review"]},
+                "steps": {"auto": {"success": {"verifier": "nope"}}},
+            }
+        )
+        with self.assertRaisesRegex(PolicyError, "invalid verifier for auto: nope"):
+            load_effective_policy(str(self.project_root))
+
     def test_tea_steps_allowed_when_explicitly_configured_and_installed(self) -> None:
         self._install_tea_skills()
         steps = tea_steps_override()
@@ -80,6 +110,11 @@ class RuntimePolicyTests(unittest.TestCase):
     def test_invalid_verifier_name_rejected(self) -> None:
         self._write_override({"steps": {"review": {"success": {"verifier": "nope"}}}})
         with self.assertRaises(PolicyError):
+            load_effective_policy(str(self.project_root))
+
+    def test_invalid_label_with_markdown_delimiter_rejected(self) -> None:
+        self._write_override({"steps": {"review": {"label": "code|review"}}})
+        with self.assertRaisesRegex(PolicyError, "invalid label for review"):
             load_effective_policy(str(self.project_root))
 
     def test_required_asset_missing_fails(self) -> None:
@@ -173,18 +208,18 @@ class RuntimePolicyTests(unittest.TestCase):
             with self.assertRaisesRegex(PolicyError, r"project override unreadable: .*story-automator\.policy\.json"):
                 load_effective_policy(str(self.project_root))
 
-    def test_unused_invalid_override_step_does_not_break_standard_inline_selection(self) -> None:
+    def test_unused_invalid_override_step_breaks_standard_inline_selection(self) -> None:
         self._write_override(
             {
                 "workflow": {"sequence": ["create", "atdd", "dev", "review"]},
                 "steps": {"atdd": {"assets": []}},
             }
         )
-        policy = load_effective_policy(
-            str(self.project_root),
-            inline_override={"workflow": {"sequence": ["create", "dev", "review"]}},
-        )
-        self.assertEqual(policy["workflow"]["sequence"], ["create", "dev", "review"])
+        with self.assertRaisesRegex(PolicyError, "atdd.assets must be an object"):
+            load_effective_policy(
+                str(self.project_root),
+                inline_override={"workflow": {"sequence": ["create", "dev", "review"]}},
+            )
 
     def test_bundled_policy_read_failure_is_wrapped_as_policy_error(self) -> None:
         policy_path = self.project_root / ".claude" / "skills" / "bmad-story-automator" / "data" / "orchestration-policy.json"

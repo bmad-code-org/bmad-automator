@@ -46,18 +46,27 @@ For TEA v1:
 **Apply retry/fallback pattern from `{retryStrategy}`:** Non-blocking, but still retry on failure.
 
 ```bash
-# --command required (see Spawn Pattern in step-03)
-resolve_agent_for_task "auto" "$state_file" "{story_id}"
-if should_apply_primary_model "$current_agent"; then
-  built_cmd=$("$scripts" tmux-wrapper build-cmd auto {story_id} --agent "$current_agent" --model "$primary_model" --state-file "$state_file")
-else
-  built_cmd=$("$scripts" tmux-wrapper build-cmd auto {story_id} --agent "$current_agent" --state-file "$state_file")
+policy_sequence=$("$scripts" orchestrator-helper policy-sequence --state-file "$state_file")
+if ! echo "$policy_sequence" | jq -e '.ok == true' >/dev/null; then
+  echo "Pinned workflow sequence unavailable; cannot evaluate automate scope."
+  exit 1
 fi
-session=$("$scripts" tmux-wrapper spawn auto {epic} {story_id} \
-  --agent "$current_agent" \
-  --command "$built_cmd")
-result=$("$scripts" monitor-session "$session" --json --agent "$current_agent")
-"$scripts" tmux-wrapper kill "$session"
+if echo "$policy_sequence" | jq -e '.sequence | index("auto")' >/dev/null; then
+  # --command required (see Spawn Pattern in step-03)
+  resolve_agent_for_task "auto" "$state_file" "{story_id}"
+  if should_apply_primary_model "$current_agent"; then
+    built_cmd=$("$scripts" tmux-wrapper build-cmd auto {story_id} --agent "$current_agent" --model "$primary_model" --state-file "$state_file")
+  else
+    built_cmd=$("$scripts" tmux-wrapper build-cmd auto {story_id} --agent "$current_agent" --state-file "$state_file")
+  fi
+  session=$("$scripts" tmux-wrapper spawn auto {epic} {story_id} \
+    --agent "$current_agent" \
+    --command "$built_cmd")
+  result=$("$scripts" monitor-session "$session" --json --agent "$current_agent")
+  "$scripts" tmux-wrapper kill "$session"
+else
+  echo "[story {N}/{total}] automate -> skipped (not in policy sequence)"
+fi
 ```
 
 - SUCCESS:
@@ -88,33 +97,44 @@ result=$("$scripts" monitor-session "$session" --json --agent "$current_agent")
 For each enabled TEA step:
 
 ```bash
-"$scripts" orchestrator-helper state-update "$state_file" \
-  --set currentStep={step} \
-  --set lastUpdated="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-resolve_agent_for_task "{step}" "$state_file" "{story_id}"
-if should_apply_primary_model "$current_agent"; then
-  built_cmd=$("$scripts" tmux-wrapper build-cmd {step} {story_id} --agent "$current_agent" --model "$primary_model" --state-file "$state_file")
-else
-  built_cmd=$("$scripts" tmux-wrapper build-cmd {step} {story_id} --agent "$current_agent" --state-file "$state_file")
+policy_sequence=$("$scripts" orchestrator-helper policy-sequence --state-file "$state_file")
+if ! echo "$policy_sequence" | jq -e '.ok == true' >/dev/null; then
+  echo "Pinned workflow sequence unavailable; cannot evaluate TEA quality-step scope."
+  exit 1
 fi
-session=$("$scripts" tmux-wrapper spawn {step} {epic} {story_id} \
-  --agent "$current_agent" \
-  --command "$built_cmd")
-result=$("$scripts" monitor-session "$session" --json --agent "$current_agent")
-"$scripts" tmux-wrapper kill "$session"
-parsed=$("$scripts" orchestrator-helper parse-output "$(printf '%s' "$result" | jq -r '.output_file')" {step} --state-file "$state_file")
-next_action=$(echo "$parsed" | jq -r '.next_action')
+while IFS= read -r tea_step; do
+  [ -n "$tea_step" ] || continue
+  "$scripts" orchestrator-helper state-update "$state_file" \
+    --set currentStep="$tea_step" \
+    --set lastUpdated="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  resolve_agent_for_task "$tea_step" "$state_file" "{story_id}"
+  if should_apply_primary_model "$current_agent"; then
+    built_cmd=$("$scripts" tmux-wrapper build-cmd "$tea_step" {story_id} --agent "$current_agent" --model "$primary_model" --state-file "$state_file")
+  else
+    built_cmd=$("$scripts" tmux-wrapper build-cmd "$tea_step" {story_id} --agent "$current_agent" --state-file "$state_file")
+  fi
+  session=$("$scripts" tmux-wrapper spawn "$tea_step" {epic} {story_id} \
+    --agent "$current_agent" \
+    --command "$built_cmd")
+  result=$("$scripts" monitor-session "$session" --json --agent "$current_agent")
+  "$scripts" tmux-wrapper kill "$session"
+  parsed=$("$scripts" orchestrator-helper parse-output "$(printf '%s' "$result" | jq -r '.output_file')" "$tea_step" --state-file "$state_file")
+  next_action=$(echo "$parsed" | jq -r '.next_action')
+
+  if [ "$next_action" = "proceed" ]; then
+    "$scripts" orchestrator-helper state-progress "$state_file" \
+      --story "${story_id}" \
+      --set "$tea_step=done" \
+      --set status=in-progress
+  else
+    break
+  fi
+done < <(echo "$policy_sequence" | jq -r '.sequence[] | select(. == "test_automate" or . == "test_review" or . == "nfr" or . == "trace")')
 ```
 
-- If `next_action == "proceed"`:
-  ```bash
-  "$scripts" orchestrator-helper state-progress "$state_file" \
-    --story "${story_id}" \
-    --set {step}=done \
-    --set status=in-progress
-  ```
+- If each concrete `tea_step` returns `next_action == "proceed"`:
   → continue to the next policy-defined step
-- If `next_action == "retry"` or the session crashes → apply the retry/fallback pattern
+- If any `tea_step` returns `next_action == "retry"` or the session crashes → apply the retry/fallback pattern for that concrete step before continuing
 - TEA v1 success for these steps means session execution completed successfully
 - When a TEA quality step completes, update only that named progress column via `state-progress` rather than rewriting the whole row
 

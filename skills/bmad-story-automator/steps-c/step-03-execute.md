@@ -173,22 +173,31 @@ validation=$("$scripts" orchestrator-helper verify-step create {story_id} --stat
 Use the same spawn/monitor/parse pattern as other session-exit steps:
 
 ```bash
-"$scripts" orchestrator-helper state-update "$state_file" \
-  --set currentStep=atdd \
-  --set lastUpdated="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-resolve_agent_for_task "atdd" "$state_file" "{story_id}"
-if should_apply_primary_model "$current_agent"; then
-  built_cmd=$("$scripts" tmux-wrapper build-cmd atdd {story_id} --agent "$current_agent" --model "$primary_model" --state-file "$state_file")
-else
-  built_cmd=$("$scripts" tmux-wrapper build-cmd atdd {story_id} --agent "$current_agent" --state-file "$state_file")
+if ! echo "$policy_sequence" | jq -e '.ok == true' >/dev/null; then
+  echo "Pinned workflow sequence unavailable; cannot evaluate ATDD scope."
+  exit 1
 fi
-session=$("$scripts" tmux-wrapper spawn atdd {epic} {story_id} \
-  --agent "$current_agent" \
-  --command "$built_cmd")
-result=$("$scripts" monitor-session "$session" --json --agent "$current_agent")
-"$scripts" tmux-wrapper kill "$session"
-parsed=$("$scripts" orchestrator-helper parse-output "$(printf '%s' "$result" | jq -r '.output_file')" atdd --state-file "$state_file")
-next_action=$(echo "$parsed" | jq -r '.next_action')
+if echo "$policy_sequence" | jq -e '.sequence | index("atdd")' >/dev/null; then
+  "$scripts" orchestrator-helper state-update "$state_file" \
+    --set currentStep=atdd \
+    --set lastUpdated="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  resolve_agent_for_task "atdd" "$state_file" "{story_id}"
+  if should_apply_primary_model "$current_agent"; then
+    built_cmd=$("$scripts" tmux-wrapper build-cmd atdd {story_id} --agent "$current_agent" --model "$primary_model" --state-file "$state_file")
+  else
+    built_cmd=$("$scripts" tmux-wrapper build-cmd atdd {story_id} --agent "$current_agent" --state-file "$state_file")
+  fi
+  session=$("$scripts" tmux-wrapper spawn atdd {epic} {story_id} \
+    --agent "$current_agent" \
+    --command "$built_cmd")
+  result=$("$scripts" monitor-session "$session" --json --agent "$current_agent")
+  "$scripts" tmux-wrapper kill "$session"
+  parsed=$("$scripts" orchestrator-helper parse-output "$(printf '%s' "$result" | jq -r '.output_file')" atdd --state-file "$state_file")
+  next_action=$(echo "$parsed" | jq -r '.next_action')
+else
+  echo "[story {N}/{total}] atdd -> skipped (not in policy sequence)"
+  next_action="proceed"
+fi
 ```
 
 - If `next_action == "proceed"`:
@@ -212,8 +221,12 @@ If `dev` is not present in the pinned sequence, skip this phase entirely and pro
 **Apply retry/fallback pattern from `{retryStrategy}`:** Up to 5 attempts, alternating agents.
 
 ```bash
+if ! echo "$policy_sequence" | jq -e '.ok == true' >/dev/null; then
+  echo "Pinned workflow sequence unavailable; cannot evaluate Dev Story scope."
+  exit 1
+fi
 dev_in_scope=false
-if echo "$policy_sequence" | jq -e '.ok == true and (.sequence | index("dev"))' >/dev/null; then
+if echo "$policy_sequence" | jq -e '.sequence | index("dev")' >/dev/null; then
   dev_in_scope=true
 else
   echo "[story {N}/{total}] dev -> skipped (not in policy sequence)"
