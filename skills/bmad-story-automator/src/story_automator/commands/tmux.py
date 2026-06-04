@@ -208,13 +208,13 @@ def _build_cmd(args: list[str]) -> int:
         cli = "codex exec"
     quoted_prompt = shlex.quote(prompt)
     if agent == "codex" and not ai_command:
-        codex_home = f"/tmp/sa-codex-home-{project_hash(root)}"
+        codex_home_template = f"${{TMPDIR:-/tmp}}/sa-codex-home-{project_hash(root)}.XXXXXX"
         auth_src = os.path.expanduser("~/.codex/auth.json")
         model_flag = f" --model {shlex.quote(model)}" if model else ""
         print(
-            f'mkdir -p "{codex_home}"'
-            + f' && if [ -f "{auth_src}" ]; then ln -sf "{auth_src}" "{codex_home}/auth.json"; fi'
-            + f' && CODEX_HOME="{codex_home}" codex exec -s workspace-write -c \'approval_policy="never"\''
+            f'codex_home=$(mktemp -d "{codex_home_template}")'
+            + f' && if [ -f "{auth_src}" ]; then ln -sf "{auth_src}" "$codex_home/auth.json"; fi'
+            + ' && CODEX_HOME="$codex_home" codex exec -s workspace-write -c \'approval_policy="never"\''
             + f' -c \'model_reasoning_effort="high"\'{model_flag}'
             + f" --disable plugins --disable sqlite --disable shell_snapshot {quoted_prompt}"
         )
@@ -442,7 +442,7 @@ def _verify_monitor_completion(
 ) -> tuple[dict[str, object], str] | None:
     try:
         contract = resolve_success_contract(project_root, workflow, state_file=state_file)
-    except (FileNotFoundError, PolicyError):
+    except (FileNotFoundError, OSError, PolicyError, ValueError):
         return ({"verified": False, "reason": "verifier_contract_invalid"}, "")
     verifier_name = str(contract.get("verifier") or "").strip()
     if not verifier_name:
@@ -457,7 +457,7 @@ def _verify_monitor_completion(
             output_file=output_file,
             contract=contract,
         )
-    except (FileNotFoundError, IsADirectoryError, NotADirectoryError, PolicyError):
+    except (FileNotFoundError, IsADirectoryError, NotADirectoryError, OSError, PolicyError, ValueError):
         return ({"verified": False, "reason": "verifier_contract_invalid"}, verifier_name)
     return (result, verifier_name)
 

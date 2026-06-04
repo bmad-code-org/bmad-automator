@@ -225,6 +225,16 @@ class SuccessVerifierTests(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertIn("BMAD config implementation_artifacts", payload["error"])
 
+    def test_story_file_status_returns_json_error_for_unreadable_artifacts_config(self) -> None:
+        self._write_bmad_config("implementation_artifacts: docs/bmad/implementation-artifacts\n")
+        stdout = io.StringIO()
+        with patch_env(self.project_root), patch("story_automator.core.artifact_paths.read_text", side_effect=PermissionError("config unreadable")), redirect_stdout(stdout):
+            code = cmd_orchestrator_helper(["story-file-status", "1.2"])
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertFalse(payload["ok"])
+        self.assertIn("config unreadable", payload["error"])
+
     def test_validate_story_creation_count_uses_resolved_artifacts_dir(self) -> None:
         self._write_bmad_config("implementation_artifacts: docs/bmad/implementation-artifacts\n")
         self._write_docs_story("1-2-docs", status="draft")
@@ -351,6 +361,58 @@ class SuccessVerifierTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["stories"], ["1.1", "1.2"])
         self.assertEqual(payload["source"], "epic_file")
+
+    def test_epic_agent_helpers_return_json_errors_for_invalid_artifacts_config(self) -> None:
+        self._write_bmad_config("implementation_artifacts: ../outside/implementation-artifacts\n")
+
+        blocking_stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(blocking_stdout):
+            blocking_code = cmd_orchestrator_helper(["check-blocking", "1.1"])
+        self.assertEqual(blocking_code, 1)
+        blocking_payload = json.loads(blocking_stdout.getvalue())
+        self.assertFalse(blocking_payload["ok"])
+        self.assertTrue(blocking_payload["blocking"])
+        self.assertIn("BMAD config implementation_artifacts", blocking_payload["error"])
+
+        stories_stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stories_stdout):
+            stories_code = cmd_orchestrator_helper(["get-epic-stories", "1"])
+        self.assertEqual(stories_code, 1)
+        stories_payload = json.loads(stories_stdout.getvalue())
+        self.assertFalse(stories_payload["ok"])
+        self.assertEqual(stories_payload["count"], 0)
+        self.assertIn("BMAD config implementation_artifacts", stories_payload["error"])
+
+    def test_orchestrator_helpers_return_json_errors_for_invalid_artifacts_config(self) -> None:
+        self._write_bmad_config("implementation_artifacts: ../outside/implementation-artifacts\n")
+        commands = [
+            (["sprint-status", "exists"], "error"),
+            (["sprint-status", "get", "1.1"], "reason"),
+            (["sprint-status", "check-epic", "1"], "reason"),
+            (["commit-ready", "1.1"], "reason"),
+            (["normalize-key", "1.1"], "error"),
+            (["check-epic-complete", "1", "1.1"], "reason"),
+        ]
+
+        for command, error_key in commands:
+            with self.subTest(command=command):
+                stdout = io.StringIO()
+                with patch_env(self.project_root), redirect_stdout(stdout):
+                    code = cmd_orchestrator_helper(command)
+                self.assertEqual(code, 1)
+                payload = json.loads(stdout.getvalue())
+                self.assertIn("BMAD config implementation_artifacts", payload[error_key])
+
+    def test_verify_step_returns_json_error_for_unreadable_artifacts_config(self) -> None:
+        self._write_bmad_config("implementation_artifacts: docs/bmad/implementation-artifacts\n")
+        stdout = io.StringIO()
+        with patch_env(self.project_root), patch("story_automator.core.artifact_paths.read_text", side_effect=PermissionError("config unreadable")), redirect_stdout(stdout):
+            code = cmd_orchestrator_helper(["verify-step", "create", "1.2"])
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertFalse(payload["verified"])
+        self.assertEqual(payload["reason"], "verifier_contract_invalid")
+        self.assertIn("config unreadable", payload["error"])
 
     def test_build_cmd_returns_controlled_error_for_invalid_artifacts_config(self) -> None:
         self._write_bmad_config("implementation_artifacts: ../outside/implementation-artifacts\n")
@@ -761,6 +823,20 @@ class SuccessVerifierTests(unittest.TestCase):
         self.assertFalse(payload["verified"])
         self.assertEqual(payload["reason"], "verifier_contract_invalid")
 
+    def test_monitor_dispatch_rejects_resolver_value_error(self) -> None:
+        with patch("story_automator.commands.tmux.resolve_success_contract", side_effect=ValueError("invalid verifier config")):
+            result = _verify_monitor_completion(
+                "review",
+                project_root=str(self.project_root),
+                story_key="1.2",
+                output_file="/tmp/session.txt",
+            )
+        self.assertIsNotNone(result)
+        payload, verifier = result or ({}, "")
+        self.assertEqual(verifier, "")
+        self.assertFalse(payload["verified"])
+        self.assertEqual(payload["reason"], "verifier_contract_invalid")
+
     def test_monitor_session_reports_incomplete_when_verifier_missing(self) -> None:
         self._write_override({"steps": {"review": {"success": {"verifier": ""}}}})
         stdout = io.StringIO()
@@ -771,6 +847,22 @@ class SuccessVerifierTests(unittest.TestCase):
         with patch_env(self.project_root), patch("story_automator.commands.tmux.time.sleep"), patch(
             "story_automator.commands.tmux.session_status", side_effect=statuses
         ), redirect_stdout(stdout):
+            code = cmd_monitor_session(["fake-session", "--json", "--workflow", "review", "--story-key", "1.2"])
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["final_state"], "incomplete")
+        self.assertEqual(payload["exit_reason"], "verifier_contract_invalid")
+        self.assertFalse(payload["output_verified"])
+
+    def test_monitor_session_reports_incomplete_when_resolver_raises_value_error(self) -> None:
+        stdout = io.StringIO()
+        statuses = [
+            {"todos_done": 1, "todos_total": 1, "session_state": "completed"},
+            {"active_task": "/tmp/session.txt"},
+        ]
+        with patch_env(self.project_root), patch("story_automator.commands.tmux.time.sleep"), patch(
+            "story_automator.commands.tmux.session_status", side_effect=statuses
+        ), patch("story_automator.commands.tmux.resolve_success_contract", side_effect=ValueError("invalid verifier config")), redirect_stdout(stdout):
             code = cmd_monitor_session(["fake-session", "--json", "--workflow", "review", "--story-key", "1.2"])
         self.assertEqual(code, 0)
         payload = json.loads(stdout.getvalue())
@@ -792,6 +884,20 @@ class SuccessVerifierTests(unittest.TestCase):
         self.assertFalse(payload["verified"])
         self.assertEqual(payload["reason"], "verifier_contract_invalid")
 
+    def test_monitor_dispatch_rejects_verifier_value_error(self) -> None:
+        with patch("story_automator.commands.tmux.run_success_verifier", side_effect=ValueError("invalid artifacts config")):
+            result = _verify_monitor_completion(
+                "review",
+                project_root=str(self.project_root),
+                story_key="1.2",
+                output_file="/tmp/session.txt",
+            )
+        self.assertIsNotNone(result)
+        payload, verifier = result or ({}, "")
+        self.assertEqual(verifier, "review_completion")
+        self.assertFalse(payload["verified"])
+        self.assertEqual(payload["reason"], "verifier_contract_invalid")
+
     def test_monitor_session_reports_incomplete_when_verifier_raises_file_error(self) -> None:
         stdout = io.StringIO()
         statuses = [
@@ -801,6 +907,22 @@ class SuccessVerifierTests(unittest.TestCase):
         with patch_env(self.project_root), patch("story_automator.commands.tmux.time.sleep"), patch(
             "story_automator.commands.tmux.session_status", side_effect=statuses
         ), patch("story_automator.commands.tmux.run_success_verifier", side_effect=FileNotFoundError("missing.json")), redirect_stdout(stdout):
+            code = cmd_monitor_session(["fake-session", "--json", "--workflow", "review", "--story-key", "1.2"])
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["final_state"], "incomplete")
+        self.assertEqual(payload["exit_reason"], "verifier_contract_invalid")
+        self.assertFalse(payload["output_verified"])
+
+    def test_monitor_session_reports_incomplete_when_verifier_raises_value_error(self) -> None:
+        stdout = io.StringIO()
+        statuses = [
+            {"todos_done": 1, "todos_total": 1, "session_state": "completed"},
+            {"active_task": "/tmp/session.txt"},
+        ]
+        with patch_env(self.project_root), patch("story_automator.commands.tmux.time.sleep"), patch(
+            "story_automator.commands.tmux.session_status", side_effect=statuses
+        ), patch("story_automator.commands.tmux.run_success_verifier", side_effect=ValueError("invalid artifacts config")), redirect_stdout(stdout):
             code = cmd_monitor_session(["fake-session", "--json", "--workflow", "review", "--story-key", "1.2"])
         self.assertEqual(code, 0)
         payload = json.loads(stdout.getvalue())
