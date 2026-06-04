@@ -117,6 +117,16 @@ class RuntimePolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(PolicyError, "invalid label for review"):
             load_effective_policy(str(self.project_root))
 
+    def test_label_collision_with_reserved_progress_column_rejected(self) -> None:
+        self._write_override({"steps": {"review": {"label": "Status"}}})
+        with self.assertRaisesRegex(PolicyError, "step label collides with reserved progress column for review: Status"):
+            load_effective_policy(str(self.project_root))
+
+    def test_label_collision_with_another_progress_column_rejected(self) -> None:
+        self._write_override({"steps": {"review": {"label": "dev-story"}}})
+        with self.assertRaisesRegex(PolicyError, "step label collides with another progress column: review, dev"):
+            load_effective_policy(str(self.project_root))
+
     def test_required_asset_missing_fails(self) -> None:
         shutil.rmtree(self.project_root / ".claude" / "skills" / "bmad-create-story")
         with self.assertRaises(PolicyError):

@@ -194,21 +194,22 @@ if echo "$policy_sequence" | jq -e '.sequence | index("atdd")' >/dev/null; then
   "$scripts" tmux-wrapper kill "$session"
   parsed=$("$scripts" orchestrator-helper parse-output "$(printf '%s' "$result" | jq -r '.output_file')" atdd --state-file "$state_file")
   next_action=$(echo "$parsed" | jq -r '.next_action')
+  if [ "$next_action" = "proceed" ]; then
+    "$scripts" orchestrator-helper state-progress "$state_file" \
+      --story "${story_id}" \
+      --set atdd=done \
+      --set status=in-progress
+  fi
 else
   echo "[story {N}/{total}] atdd -> skipped (not in policy sequence)"
   next_action="proceed"
 fi
 ```
 
-- If `next_action == "proceed"`:
-  ```bash
-  "$scripts" orchestrator-helper state-progress "$state_file" \
-    --story "${story_id}" \
-    --set atdd=done \
-    --set status=in-progress
-  ```
+- If ATDD ran and `next_action == "proceed"`:
   → continue to the next policy-defined step
-- If `next_action == "retry"` or session crashed → retry with fallback pattern
+- If ATDD ran and `next_action == "retry"` or session crashed → retry with fallback pattern
+- If ATDD was not in the pinned sequence → skip directly to the next policy-defined step without writing `atdd=done`
 - Treat successful completion as execution completion only; TEA artifact verification is not part of v1
 
 When updating progress, do not assume the standard fixed column order if TEA mode is active.

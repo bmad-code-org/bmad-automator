@@ -112,8 +112,12 @@ wait "$epic_status_pid"
 epic_status=$(cat "$tmp_epic_status")
 rm -f "$tmp_epic_status"
 policy_sequence=$("{scriptsDir}" orchestrator-helper policy-sequence --state-file "{outputFile}")
+if ! echo "$policy_sequence" | jq -e '.ok == true' >/dev/null; then
+    echo "Pinned workflow sequence unavailable; cannot evaluate retrospective scope."
+    exit 1
+fi
 policy_has_retro=false
-if echo "$policy_sequence" | jq -e '.ok == true and (.sequence | index("retro"))' >/dev/null; then
+if echo "$policy_sequence" | jq -e '.sequence | index("retro")' >/dev/null; then
     policy_has_retro=true
 fi
 

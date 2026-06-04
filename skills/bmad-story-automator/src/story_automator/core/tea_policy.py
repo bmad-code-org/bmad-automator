@@ -84,7 +84,7 @@ def build_run_policy(project_root: Path, config: dict[str, Any]) -> dict[str, An
                 raise PolicyError(explicit_override_validation_error or "explicit TEA story-automator policy is invalid")
             explicit_sequence = ((explicit_override_resolved.get("workflow") or {}).get("sequence")) or []
             selected = set(selected_optional_steps_from_sequence([step for step in explicit_sequence if isinstance(step, str)]))
-            if _normalize_option_list(config.get("selectedOptionalSteps")):
+            if _normalize_option_list(config.get("selectedOptionalSteps")) or "includeRetro" in config:
                 notes.append("Per-run TEA optional-step selection was ignored because the project defines an explicit TEA story-automator policy.")
             if _normalize_option_list(config.get("manualCheckpoints")):
                 notes.append("checkpoint-preview is out of scope for story-automator and was ignored.")
@@ -102,7 +102,7 @@ def build_run_policy(project_root: Path, config: dict[str, Any]) -> dict[str, An
             notes.append("nfr was requested on the TEA track, but the TEA NFR skill is not installed, so it was ignored.")
             include_nfr = False
             selected.discard("nfr")
-        include_retro = "retro" in selected
+        include_retro = "retro" in selected if "retro" in selected else _as_bool(config.get("includeRetro"), False)
         if "validate-create-story" in selected:
             notes.append("validate-create-story remains an advisory pre-dev quality check and is not yet automated by story-automator.")
         if "qa-generate-e2e-tests" in selected:

@@ -14,6 +14,7 @@ VALID_STEP_NAMES = {"create", "dev", "auto", "review", "retro", "atdd", "test_au
 VALID_VERIFIERS = {"create_story_artifact", "session_exit", "review_completion", "epic_complete"}
 VALID_ASSET_NAMES = {"skill", "workflow", "instructions", "checklist", "template"}
 VALID_PARSER_PROVIDERS = {"claude"}
+RESERVED_PROGRESS_LABELS = {"story", "status", "git-commit"}
 
 
 def load_bundled_policy(project_root: str | None = None, *, resolve_assets: bool = True) -> dict[str, Any]:
@@ -402,6 +403,7 @@ def _validate_policy_shape(policy: dict[str, Any]) -> None:
         raise PolicyError("workflow.repeat.review.maxCycles must be an integer")
     if "maxRetries" in crash and not isinstance(crash.get("maxRetries"), int):
         raise PolicyError("workflow.crash.maxRetries must be an integer")
+    normalized_labels: dict[str, str] = {}
     for step in sequence:
         if step not in steps:
             raise PolicyError(f"workflow.sequence references missing step: {step}")
@@ -418,6 +420,13 @@ def _validate_policy_shape(policy: dict[str, Any]) -> None:
         label = contract.get("label")
         if label is not None and (not isinstance(label, str) or any(ch in label for ch in ("|", "\n", "\r"))):
             raise PolicyError(f"invalid label for {name}")
+        normalized_label = _normalize_policy_label(str(label or name))
+        if normalized_label in RESERVED_PROGRESS_LABELS:
+            raise PolicyError(f"step label collides with reserved progress column for {name}: {label or name}")
+        previous = normalized_labels.get(normalized_label)
+        if previous and previous != name:
+            raise PolicyError(f"step label collides with another progress column: {name}, {previous}")
+        normalized_labels[normalized_label] = name
         required = (assets.get("required")) or []
         if not isinstance(required, list) or any(item not in VALID_ASSET_NAMES for item in required):
             raise PolicyError(f"invalid required assets for {name}")
@@ -663,3 +672,7 @@ def _expect_optional_nested_dict(payload: dict[str, Any], key: str, label: str) 
     if not isinstance(value, dict):
         raise PolicyError(f"{label}.{key} must be an object")
     return value
+
+
+def _normalize_policy_label(value: str) -> str:
+    return value.strip().lower().replace("_", "-")

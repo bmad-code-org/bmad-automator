@@ -77,6 +77,29 @@ class TeaStateRenderingTests(unittest.TestCase):
         self.assertTrue(any("not yet automated by story-automator" in note for note in payload["notes"]))
         self.assertTrue(any("out of scope for story-automator" in note for note in payload["notes"]))
 
+    def test_build_run_policy_honors_include_retro_on_tea_track(self) -> None:
+        install_tea_skills(self.project_root, include_nfr=True)
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_build_run_policy(
+                [
+                    "--config-json",
+                    json.dumps(
+                        {
+                            "workflowTrack": "tea",
+                            "includeRetro": True,
+                        }
+                    ),
+                ]
+            )
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(
+            payload["policyOverride"]["workflow"]["sequence"],
+            ["create", "atdd", "dev", "test_automate", "test_review", "trace", "review", "retro"],
+        )
+        self.assertEqual(payload["selectedOptionalSteps"], ["retro"])
+
     def test_build_state_doc_returns_structured_snapshot_error_for_unrunnable_tea_track(self) -> None:
         stdout = io.StringIO()
         template = self.project_root / ".claude" / "skills" / "bmad-story-automator" / "templates" / "state-document.md"
@@ -233,6 +256,31 @@ class TeaStateRenderingTests(unittest.TestCase):
         self.assertEqual(payload["manualCheckpoints"], [])
         self.assertTrue(any("checkpoint-preview is out of scope" in note for note in payload["notes"]))
 
+    def test_build_run_policy_notes_ignored_include_retro_for_explicit_tea_override(self) -> None:
+        install_tea_skills(self.project_root, canonical=True)
+        self._write_policy_override(
+            {
+                "workflow": {"sequence": ["create", "atdd", "dev", "test_automate", "test_review", "trace", "review"]},
+                "steps": tea_steps_override(canonical=True),
+            }
+        )
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_build_run_policy(
+                [
+                    "--config-json",
+                    json.dumps(
+                        {
+                            "workflowTrack": "tea",
+                            "includeRetro": True,
+                        }
+                    ),
+                ]
+            )
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertTrue(any("Per-run TEA optional-step selection was ignored" in note for note in payload["notes"]))
+
     def test_build_run_policy_rejects_invalid_explicit_override(self) -> None:
         stdout = io.StringIO()
         with patch_env(self.project_root), redirect_stdout(stdout):
@@ -279,6 +327,25 @@ class TeaStateRenderingTests(unittest.TestCase):
         self.assertEqual(code, 1)
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["error"], "storyRange_must_be_array_of_strings")
+
+    def test_build_state_doc_rejects_story_range_markdown_control_characters(self) -> None:
+        stdout = io.StringIO()
+        template = self.project_root / ".claude" / "skills" / "bmad-story-automator" / "templates" / "state-document.md"
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_build_state_doc(
+                [
+                    "--template",
+                    str(template),
+                    "--output-folder",
+                    str(self.output_dir),
+                    "--config-json",
+                    json.dumps({**self._base_config(), "storyRange": ["1|1"]}),
+                ]
+            )
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["error"], "storyRange_contains_invalid_ids")
+        self.assertEqual(payload["invalid"], ["1|1"])
 
     def test_build_run_policy_drops_nfr_when_nfr_skill_is_missing(self) -> None:
         install_tea_skills(self.project_root, canonical=True, write_assets=False)
