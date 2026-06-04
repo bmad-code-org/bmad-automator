@@ -298,6 +298,41 @@ class SuccessVerifierTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("BMAD config implementation_artifacts", stderr.getvalue())
 
+    def test_validate_story_creation_count_returns_controlled_error_for_unreadable_config(self) -> None:
+        stderr = io.StringIO()
+        with (
+            patch_env(self.project_root),
+            patch("story_automator.commands.validate_story_creation.implementation_artifacts_dir", side_effect=PermissionError("config unreadable")),
+            redirect_stderr(stderr),
+        ):
+            code = cmd_validate_story_creation(["count", "1.2"])
+        self.assertEqual(code, 1)
+        self.assertIn("config unreadable", stderr.getvalue())
+
+    def test_validate_story_creation_check_returns_compat_schema_for_unreadable_config(self) -> None:
+        stdout = io.StringIO()
+        with (
+            patch_env(self.project_root),
+            patch("story_automator.commands.validate_story_creation.implementation_artifacts_dir", side_effect=PermissionError("config unreadable")),
+            redirect_stdout(stdout),
+        ):
+            code = cmd_validate_story_creation(["check", "1.2"])
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertFalse(payload["valid"])
+        self.assertIn("config unreadable", payload["reason"])
+
+    def test_validate_story_creation_list_returns_controlled_error_for_unreadable_config(self) -> None:
+        stderr = io.StringIO()
+        with (
+            patch_env(self.project_root),
+            patch("story_automator.commands.validate_story_creation.implementation_artifacts_dir", side_effect=PermissionError("config unreadable")),
+            redirect_stderr(stderr),
+        ):
+            code = cmd_validate_story_creation(["list", "1.2"])
+        self.assertEqual(code, 1)
+        self.assertIn("config unreadable", stderr.getvalue())
+
     def test_step_prompt_uses_resolved_artifacts_dir(self) -> None:
         self._write_bmad_config("implementation_artifacts: docs/bmad/implementation-artifacts\n")
         template = self.project_root / "prompt.md"
