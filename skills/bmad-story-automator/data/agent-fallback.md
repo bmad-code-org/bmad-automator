@@ -1,6 +1,6 @@
 # Agent Fallback Strategy (v3.0.0)
 
-**Multi-Agent Support:** The orchestrator can use Claude or Codex as AI coding agents, with automatic fallback on failure.
+**Multi-Agent Support:** The orchestrator can use Claude, Codex, Gemini, or configured custom non-Codex commands as AI coding agents, with automatic fallback on failure.
 
 ## Configuration
 
@@ -29,8 +29,10 @@ Agent selection is resolved via the deterministic agents file created in preflig
 |-------|-----|--------------|---------|---------------|
 | Claude | `claude --dangerously-skip-permissions` | Natural language skill prompt | 60min | ☒/☐ checkboxes |
 | Codex | `codex exec --full-auto` | Natural language prompt | 90min (1.5x) | Not supported |
+| Gemini | `gemini -p` | Natural language skill prompt | 60min | best-effort via generic monitor |
+| Custom | `STORY_AUTOMATOR_AGENT_<NAME>_COMMAND` | Natural language skill prompt | 60min | best-effort via configured process pattern |
 
-**CRITICAL:** Both Claude and Codex prompts must name the skill/workflow to execute and include the story ID.
+**CRITICAL:** All child-agent prompts must name the skill/workflow to execute and include the story ID.
 
 The `story-automator tmux-wrapper build-cmd` function automatically generates the correct prompt format based on `AI_AGENT` environment variable.
 

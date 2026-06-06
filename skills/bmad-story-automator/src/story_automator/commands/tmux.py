@@ -97,7 +97,11 @@ def cmd_tmux_wrapper(args: list[str]) -> int:
                 idx += 2
                 continue
             idx += 1
-        print(agent_cli(agent_type(), model))
+        try:
+            print(agent_cli(agent_type(), model))
+        except ValueError as exc:
+            print(str(exc), file=__import__("sys").stderr)
+            return 1
         return 0
     if action == "skill-prefix":
         print(skill_prefix(agent_type()))
@@ -203,7 +207,11 @@ def _build_cmd(args: list[str]) -> int:
     if ai_command and not os.environ.get("AI_AGENT"):
         cli = ai_command
     elif agent != "codex":
-        cli = agent_cli(agent, model)
+        try:
+            cli = agent_cli(agent, model)
+        except ValueError as exc:
+            print(str(exc), file=__import__("sys").stderr)
+            return 1
     else:
         cli = "codex exec"
     quoted_prompt = shlex.quote(prompt)

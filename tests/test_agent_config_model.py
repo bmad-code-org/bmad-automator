@@ -17,7 +17,12 @@ from story_automator.core.agent_config import (
     resolve_agent_for_task,
     resolve_agents,
 )
-from story_automator.core.tmux_runtime import agent_cli
+from story_automator.core.tmux_runtime import (
+    agent_cli,
+    agent_process_pattern,
+    detect_agent_session,
+    env_agent_name,
+)
 from story_automator.commands.orchestrator import cmd_orchestrator_helper
 from story_automator.commands.orchestrator_epic_agents import (
     parse_agent_config,
@@ -34,6 +39,35 @@ class AgentCliModelTests(unittest.TestCase):
     def test_agent_cli_without_model_unchanged(self) -> None:
         self.assertEqual(agent_cli("claude"), "claude --dangerously-skip-permissions")
         self.assertEqual(agent_cli("codex"), "codex exec")
+
+    def test_agent_cli_supports_gemini(self) -> None:
+        self.assertEqual(agent_cli("gemini"), "gemini -p")
+        self.assertEqual(agent_cli(" Gemini "), "gemini -p")
+
+    def test_agent_cli_rejects_unknown_without_custom_command(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unsupported agent"):
+            agent_cli("not-a-real-agent")
+
+    def test_agent_cli_supports_custom_command(self) -> None:
+        with patch.dict(os.environ, {"STORY_AUTOMATOR_AGENT_MY_AGENT_COMMAND": "my-agent --prompt"}, clear=False):
+            self.assertEqual(agent_cli("my-agent"), "my-agent --prompt")
+
+    def test_agent_cli_supports_legacy_custom_command_env(self) -> None:
+        with patch.dict(os.environ, {"AI_COMMAND_MY_AGENT": "legacy-agent --prompt"}, clear=False):
+            self.assertEqual(agent_cli("my-agent"), "legacy-agent --prompt")
+
+    def test_agent_process_pattern_supports_gemini_and_custom(self) -> None:
+        self.assertEqual(agent_process_pattern("gemini"), "gemini")
+        self.assertEqual(agent_process_pattern("my-agent"), "my-agent")
+        with patch.dict(os.environ, {"STORY_AUTOMATOR_AGENT_MY_AGENT_PROCESS": "my-agent-bin"}, clear=False):
+            self.assertEqual(agent_process_pattern("my-agent"), "my-agent-bin")
+
+    def test_env_agent_name_normalizes_for_env_vars(self) -> None:
+        self.assertEqual(env_agent_name("gemini-pro preview"), "GEMINI_PRO_PREVIEW")
+
+    def test_detect_agent_session_supports_gemini_capture(self) -> None:
+        with patch("story_automator.core.tmux_runtime.tmux_show_environment", return_value=""):
+            self.assertEqual(detect_agent_session("session", "Gemini CLI ready"), "gemini")
 
     def test_agent_cli_with_model_for_claude(self) -> None:
         self.assertEqual(
@@ -579,6 +613,36 @@ class BuildCmdModelFlagTests(unittest.TestCase):
         rendered = stdout.getvalue()
         self.assertIn("--model gpt-5.5", rendered)
         self.assertIn("codex exec -s workspace-write", rendered)
+
+    def test_build_cmd_uses_gemini_without_claude_fallback(self) -> None:
+        stdout = io.StringIO()
+        with patch.dict(os.environ, {"PROJECT_ROOT": str(self.project_root), "AI_AGENT": "gemini"}, clear=False), redirect_stdout(stdout):
+            code = _build_cmd(["review", "9.1", "--agent", "gemini"])
+        self.assertEqual(code, 0)
+        rendered = stdout.getvalue()
+        self.assertIn("gemini -p", rendered)
+        self.assertNotIn("claude --dangerously-skip-permissions", rendered)
+
+    def test_build_cmd_rejects_unknown_agent_without_claude_fallback(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with patch.dict(os.environ, {"PROJECT_ROOT": str(self.project_root), "AI_AGENT": "claude"}, clear=False), redirect_stdout(stdout), __import__("contextlib").redirect_stderr(stderr):
+            code = _build_cmd(["review", "9.1", "--agent", "gemini-pro"])
+        self.assertEqual(code, 1)
+        self.assertNotIn("claude --dangerously-skip-permissions", stdout.getvalue())
+        self.assertIn("unsupported agent", stderr.getvalue())
+
+    def test_build_cmd_allows_custom_agent_command(self) -> None:
+        stdout = io.StringIO()
+        env = {
+            "PROJECT_ROOT": str(self.project_root),
+            "AI_AGENT": "gemini-pro",
+            "STORY_AUTOMATOR_AGENT_GEMINI_PRO_COMMAND": "gemini -p --model pro",
+        }
+        with patch.dict(os.environ, env, clear=False), redirect_stdout(stdout):
+            code = _build_cmd(["review", "9.1", "--agent", "gemini-pro"])
+        self.assertEqual(code, 0)
+        self.assertIn("gemini -p --model pro", stdout.getvalue())
 
     def test_build_cmd_without_model_unchanged(self) -> None:
         stdout = io.StringIO()

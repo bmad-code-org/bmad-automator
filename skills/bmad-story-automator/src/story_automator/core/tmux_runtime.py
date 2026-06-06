@@ -79,21 +79,68 @@ def generate_session_name(step: str, epic: str, story_id: str, cycle: str = "") 
 
 
 def agent_type() -> str:
-    value = os.environ.get("AI_AGENT", "").strip().lower()
-    if value in {"claude", "codex"}:
+    value = normalize_agent_name(os.environ.get("AI_AGENT", ""))
+    if value:
         return value
     return runtime_provider()
 
 
 def agent_cli(agent: str, model: str = "") -> str:
+    agent = normalize_agent_name(agent)
     model = (model or "").strip()
-    if agent == "codex":
-        base = "codex exec"
-    else:
+    custom = custom_agent_command(agent)
+    if custom:
+        base = custom
+    elif agent in {"", "claude"}:
         base = "claude --dangerously-skip-permissions"
+    elif agent == "codex":
+        base = "codex exec"
+    elif agent == "gemini":
+        base = "gemini -p"
+    else:
+        raise ValueError(
+            f"unsupported agent {agent!r}; supported agents are claude, codex, gemini, "
+            f"or set STORY_AUTOMATOR_AGENT_{env_agent_name(agent)}_COMMAND"
+        )
     if model:
         base = f"{base} --model {shlex.quote(model)}"
     return base
+
+
+def custom_agent_command(agent: str) -> str:
+    if not agent:
+        return ""
+    for key in (
+        f"STORY_AUTOMATOR_AGENT_{env_agent_name(agent)}_COMMAND",
+        f"AI_COMMAND_{env_agent_name(agent)}",
+    ):
+        value = os.environ.get(key, "").strip()
+        if value:
+            return value
+    return ""
+
+
+def normalize_agent_name(agent: str) -> str:
+    return (agent or "").strip().lower()
+
+
+def env_agent_name(agent: str) -> str:
+    clean = re.sub(r"[^A-Za-z0-9]+", "_", agent or "").strip("_")
+    return clean.upper()
+
+
+def agent_process_pattern(agent: str) -> str:
+    agent = normalize_agent_name(agent)
+    if not agent:
+        return "claude"
+    custom = os.environ.get(f"STORY_AUTOMATOR_AGENT_{env_agent_name(agent)}_PROCESS", "").strip()
+    if custom:
+        return custom
+    if agent == "codex":
+        return "codex"
+    if agent == "gemini":
+        return "gemini"
+    return agent
 
 
 def skill_prefix(agent: str) -> str:
@@ -348,11 +395,14 @@ def extract_active_task(capture: str) -> str:
     return active[:80]
 
 
-def detect_codex_session(session: str, capture: str) -> str:
-    if tmux_show_environment(session, "AI_AGENT") == "codex":
-        return "codex"
+def detect_agent_session(session: str, capture: str) -> str:
+    env_agent = normalize_agent_name(tmux_show_environment(session, "AI_AGENT"))
+    if env_agent:
+        return env_agent
     if re.search(r"(?i)OpenAI Codex|codex exec|gpt-[0-9]+-codex|tokens used|codex-cli", capture):
         return "codex"
+    if re.search(r"(?i)Gemini|gemini -p|gemini-cli", capture):
+        return "gemini"
     return "claude"
 
 
@@ -861,8 +911,9 @@ def _legacy_claude_session_status(
             "session_state": "completed",
         }
 
+    agent = detect_agent_session(session, capture)
     pane_pid = _safe_int(tmux_display(session, "#{pane_pid}"))
-    claude_running = pane_pid > 0 and run_cmd("pgrep", "-P", str(pane_pid), "-f", "claude")[1] == 0
+    agent_running = pane_pid > 0 and run_cmd("pgrep", "-P", str(pane_pid), "-f", agent_process_pattern(agent))[1] == 0
     activity_detected = bool(
         re.search(
             r"(?i)ctrl\+c to interrupt|Musing|Thinking|Working|Running|Loading|Beaming|Galloping|Razzmatazzing|Creating|⏺|✻|·",
@@ -870,8 +921,8 @@ def _legacy_claude_session_status(
         )
     )
 
-    if activity_detected or claude_running:
-        active_task = extract_active_task(capture) or "Claude working"
+    if activity_detected or agent_running:
+        active_task = extract_active_task(capture) or f"{agent.title()} working"
         wait_estimate = estimate_wait(active_task, todos_done, todos_total)
         _save_legacy_state(
             state_path,

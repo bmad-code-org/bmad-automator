@@ -188,15 +188,15 @@ tmux capture-pane -t "SESSION" -p -S -100   # Raw capture (use sparingly)
 
 **Agent Configuration (v1.3.0):**
 
-| Variable | Claude | Codex |
-|----------|--------|-------|
-| CLI | `claude --dangerously-skip-permissions` | `codex exec --full-auto` |
-| Prompt Style | Natural language skill prompt | Natural language skill prompt |
-| Timeout Multiplier | 1x (60min) | 1.5x (90min) |
-| Todo Tracking | ☒/☐ checkboxes | Not supported |
+| Variable | Claude | Codex | Gemini | Custom non-Codex |
+|----------|--------|-------|--------|------------------|
+| CLI | `claude --dangerously-skip-permissions` | `codex exec --full-auto` | `gemini -p` | `STORY_AUTOMATOR_AGENT_<NAME>_COMMAND` |
+| Prompt Style | Natural language skill prompt | Natural language skill prompt | Natural language skill prompt | Natural language skill prompt |
+| Timeout Multiplier | 1x (60min) | 1.5x (90min) | 1x (60min) | 1x (60min) |
+| Todo Tracking | ☒/☐ checkboxes | Not supported | best-effort generic monitor | best-effort generic monitor |
 
 **Environment Variables:**
-- `AI_AGENT` = `claude` or `codex` (used by story-automator tmux-wrapper and story-automator monitor-session)
+- `AI_AGENT` = `claude`, `codex`, `gemini`, or a custom agent name (used by story-automator tmux-wrapper and story-automator monitor-session)
 - `AI_COMMAND` = Full CLI (legacy, deprecated)
 
 `{projectPath}` = project root
