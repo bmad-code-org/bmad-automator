@@ -913,7 +913,7 @@ def _legacy_claude_session_status(
 
     agent = detect_agent_session(session, capture)
     pane_pid = _safe_int(tmux_display(session, "#{pane_pid}"))
-    agent_running = pane_pid > 0 and run_cmd("pgrep", "-P", str(pane_pid), "-f", agent_process_pattern(agent))[1] == 0
+    agent_running = _pane_has_agent_descendant(pane_pid, agent_process_pattern(agent))
     activity_detected = bool(
         re.search(
             r"(?i)ctrl\+c to interrupt|Musing|Thinking|Working|Running|Loading|Beaming|Galloping|Razzmatazzing|Creating|⏺|✻|·",
@@ -1301,6 +1301,62 @@ def _find_agent_pid(parent: str, pattern: str, depth: int) -> str:
         if nested:
             return nested
     return ""
+
+
+def _pane_has_agent_descendant(pane_pid: int, pattern: str) -> bool:
+    """Return True if any process matching ``pattern`` is a descendant of ``pane_pid``.
+
+    ``pgrep -P`` only matches direct children, so it misses agents launched
+    through a wrapper or shell (the agent then runs as a grandchild). Here we
+    collect candidate PIDs by command pattern and confirm ancestry by walking
+    parent PIDs back up to ``pane_pid``.
+    """
+    if pane_pid <= 0:
+        return False
+    output, code = run_cmd("pgrep", "-f", pattern)
+    if code != 0:
+        return False
+    for line in output.splitlines():
+        candidate = _safe_int(line.strip())
+        if candidate <= 0 or candidate == pane_pid:
+            continue
+        if _pid_has_ancestor(candidate, pane_pid):
+            return True
+    return False
+
+
+def _pid_has_ancestor(pid: int, ancestor: int, max_depth: int = 32) -> bool:
+    current = pid
+    seen: set[int] = set()
+    for _ in range(max_depth):
+        ppid = _process_ppid(current)
+        if ppid <= 0 or ppid == current or ppid in seen:
+            return False
+        if ppid == ancestor:
+            return True
+        seen.add(ppid)
+        current = ppid
+    return False
+
+
+def _process_ppid(pid: int) -> int:
+    """Return the parent PID of ``pid`` (prefer ``/proc`` on Linux, fall back to ``ps``)."""
+    try:
+        raw = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        raw = ""
+    if raw:
+        # Format: "pid (comm) state ppid ...". comm may contain spaces or
+        # parentheses, so split after the final ')' to read state/ppid safely.
+        rparen = raw.rfind(")")
+        if rparen != -1:
+            fields = raw[rparen + 1:].split()
+            if len(fields) >= 2:
+                return _safe_int(fields[1])
+    output, code = run_cmd("ps", "-o", "ppid=", "-p", str(pid))
+    if code != 0:
+        return 0
+    return _safe_int(output.strip())
 
 
 def _process_cpu(pid: int) -> float:

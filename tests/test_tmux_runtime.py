@@ -13,6 +13,8 @@ from story_automator.core.tmux_runtime import (
     _check_prompt_visible,
     _claude_completion_marker_present,
     _legacy_heartbeat_check,
+    _pane_has_agent_descendant,
+    _pid_has_ancestor,
     _reconcile_runner_state,
     _runner_file_content,
     cleanup_runtime_artifacts,
@@ -480,6 +482,47 @@ class TmuxRuntimeStateTests(unittest.TestCase):
         self.assertEqual(cpu, 0.5)
         self.assertEqual(pid, "12")
         self.assertEqual(prompt, "false")
+
+
+class PaneDescendantDetectionTests(unittest.TestCase):
+    def test_detects_grandchild_agent_via_ancestry_walk(self) -> None:
+        # pane(100) -> shell(200) -> claude(300); pgrep -f matches only the grandchild.
+        parents = {300: 200, 200: 100}
+        with (
+            mock.patch("story_automator.core.tmux_runtime.run_cmd", return_value=("300\n", 0)),
+            mock.patch(
+                "story_automator.core.tmux_runtime._process_ppid",
+                side_effect=lambda pid: parents.get(pid, 0),
+            ),
+        ):
+            self.assertTrue(_pane_has_agent_descendant(100, "claude"))
+
+    def test_ignores_matching_process_outside_pane_tree(self) -> None:
+        # An unrelated claude process whose ancestry never reaches the pane pid.
+        parents = {300: 999, 999: 1}
+        with (
+            mock.patch("story_automator.core.tmux_runtime.run_cmd", return_value=("300\n", 0)),
+            mock.patch(
+                "story_automator.core.tmux_runtime._process_ppid",
+                side_effect=lambda pid: parents.get(pid, 0),
+            ),
+        ):
+            self.assertFalse(_pane_has_agent_descendant(100, "claude"))
+
+    def test_no_match_when_pgrep_finds_nothing(self) -> None:
+        with mock.patch("story_automator.core.tmux_runtime.run_cmd", return_value=("", 1)):
+            self.assertFalse(_pane_has_agent_descendant(100, "claude"))
+
+    def test_invalid_pane_pid_short_circuits(self) -> None:
+        self.assertFalse(_pane_has_agent_descendant(0, "claude"))
+
+    def test_pid_has_ancestor_handles_cycles(self) -> None:
+        # Defensive: a self/looping parent chain must terminate, not hang.
+        with mock.patch(
+            "story_automator.core.tmux_runtime._process_ppid",
+            side_effect=lambda pid: pid,
+        ):
+            self.assertFalse(_pid_has_ancestor(300, 100))
 
 
 if __name__ == "__main__":
