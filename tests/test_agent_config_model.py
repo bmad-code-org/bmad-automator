@@ -737,6 +737,24 @@ class BuildCmdModelFlagTests(unittest.TestCase):
         self.assertIn("gemini --approval-mode yolo -p", rendered)
         self.assertNotIn("claude --dangerously-skip-permissions", rendered)
 
+    def test_build_cmd_honors_ai_command_only_gemini_without_raw_bypass(self) -> None:
+        stdout = io.StringIO()
+        env = {"PROJECT_ROOT": str(self.project_root), "AI_COMMAND": "gemini", "AI_AGENT": ""}
+        with patch.dict(os.environ, env, clear=False), redirect_stdout(stdout):
+            code = _build_cmd(["review", "9.1", "--model", "gemini-2.5-pro"])
+        self.assertEqual(code, 0)
+        rendered = stdout.getvalue()
+        self.assertIn("gemini --approval-mode yolo --model gemini-2.5-pro -p", rendered)
+        self.assertNotIn("claude --dangerously-skip-permissions", rendered)
+
+    def test_build_cmd_preserves_ai_command_only_custom_command(self) -> None:
+        stdout = io.StringIO()
+        env = {"PROJECT_ROOT": str(self.project_root), "AI_COMMAND": "custom-agent --prompt", "AI_AGENT": ""}
+        with patch.dict(os.environ, env, clear=False), redirect_stdout(stdout):
+            code = _build_cmd(["review", "9.1"])
+        self.assertEqual(code, 0)
+        self.assertIn("custom-agent --prompt", stdout.getvalue())
+
     def test_build_cmd_rejects_unknown_agent_without_claude_fallback(self) -> None:
         stdout = io.StringIO()
         stderr = io.StringIO()

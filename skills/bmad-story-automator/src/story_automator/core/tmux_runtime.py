@@ -1010,7 +1010,7 @@ def _legacy_heartbeat_check(session: str, selected_agent: str) -> tuple[str, flo
     pane_pid = _safe_int(tmux_display(session, "#{pane_pid}"))
     if pane_pid <= 0:
         return ("completed" if prompt == "true" else "dead", 0.0, "", prompt)
-    pattern = "codex" if selected_agent == "codex" else "claude"
+    pattern = agent_process_pattern(selected_agent)
     agent_pid = _find_agent_pid(str(pane_pid), pattern, 0)
     if not agent_pid:
         return ("completed" if prompt == "true" else "dead", 0.0, "", prompt)

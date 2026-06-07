@@ -483,6 +483,20 @@ class TmuxRuntimeStateTests(unittest.TestCase):
         self.assertEqual(pid, "12")
         self.assertEqual(prompt, "false")
 
+    def test_legacy_heartbeat_uses_selected_agent_process_pattern(self) -> None:
+        with (
+            mock.patch("story_automator.core.tmux_runtime.tmux_has_session", return_value=True),
+            mock.patch("story_automator.core.tmux_runtime._capture_text", return_value="working"),
+            mock.patch("story_automator.core.tmux_runtime.tmux_display", return_value="10"),
+            mock.patch("story_automator.core.tmux_runtime._find_agent_pid", return_value="12") as find_pid,
+            mock.patch("story_automator.core.tmux_runtime._process_cpu", return_value=0.5),
+        ):
+            status, _cpu, pid, _prompt = _legacy_heartbeat_check("sa-test-legacy-gemini", "gemini")
+
+        self.assertEqual(status, "alive")
+        self.assertEqual(pid, "12")
+        find_pid.assert_called_once_with("10", "gemini", 0)
+
 
 class PaneDescendantDetectionTests(unittest.TestCase):
     def test_detects_grandchild_agent_via_ancestry_walk(self) -> None:

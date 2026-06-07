@@ -205,7 +205,10 @@ def _build_cmd(args: list[str]) -> int:
         return 1
     ai_command = os.environ.get("AI_COMMAND", "").strip()
     if ai_command and not os.environ.get("AI_AGENT"):
-        cli = ai_command
+        if agent == "gemini":
+            cli = agent_cli(agent, model)
+        else:
+            cli = ai_command
     elif agent != "codex":
         try:
             cli = agent_cli(agent, model)
