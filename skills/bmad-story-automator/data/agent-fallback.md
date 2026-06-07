@@ -29,7 +29,7 @@ Agent selection is resolved via the deterministic agents file created in preflig
 |-------|-----|--------------|---------|---------------|
 | Claude | `claude --dangerously-skip-permissions` | Natural language skill prompt | 60min | ☒/☐ checkboxes |
 | Codex | `codex exec --full-auto` | Natural language prompt | 90min (1.5x) | Not supported |
-| Gemini | `gemini -p` | Natural language skill prompt | 60min | best-effort via generic monitor |
+| Gemini | `gemini --approval-mode yolo -p` | Natural language skill prompt | 60min | best-effort via generic monitor |
 | Custom | `STORY_AUTOMATOR_AGENT_<NAME>_COMMAND` | Natural language skill prompt | 60min | best-effort via configured process pattern |
 
 **CRITICAL:** All child-agent prompts must name the skill/workflow to execute and include the story ID.

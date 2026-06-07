@@ -96,7 +96,7 @@ def agent_cli(agent: str, model: str = "") -> str:
     elif agent == "codex":
         base = "codex exec"
     elif agent == "gemini":
-        base = "gemini -p"
+        base = "gemini --approval-mode yolo -p"
     else:
         raise ValueError(
             f"unsupported agent {agent!r}; supported agents are claude, codex, gemini, "

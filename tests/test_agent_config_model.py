@@ -45,8 +45,8 @@ class AgentCliModelTests(unittest.TestCase):
         self.assertEqual(agent_cli("codex"), "codex exec")
 
     def test_agent_cli_supports_gemini(self) -> None:
-        self.assertEqual(agent_cli("gemini"), "gemini -p")
-        self.assertEqual(agent_cli(" Gemini "), "gemini -p")
+        self.assertEqual(agent_cli("gemini"), "gemini --approval-mode yolo -p")
+        self.assertEqual(agent_cli(" Gemini "), "gemini --approval-mode yolo -p")
 
     def test_agent_cli_rejects_unknown_without_custom_command(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsupported agent"):
@@ -661,7 +661,7 @@ class BuildCmdModelFlagTests(unittest.TestCase):
             code = _build_cmd(["review", "9.1", "--agent", "gemini"])
         self.assertEqual(code, 0)
         rendered = stdout.getvalue()
-        self.assertIn("gemini -p", rendered)
+        self.assertIn("gemini --approval-mode yolo -p", rendered)
         self.assertNotIn("claude --dangerously-skip-permissions", rendered)
 
     def test_build_cmd_honors_ai_agent_gemini_without_explicit_flag(self) -> None:
@@ -674,7 +674,7 @@ class BuildCmdModelFlagTests(unittest.TestCase):
             code = _build_cmd(["review", "9.1"])
         self.assertEqual(code, 0)
         rendered = stdout.getvalue()
-        self.assertIn("gemini -p", rendered)
+        self.assertIn("gemini --approval-mode yolo -p", rendered)
         self.assertNotIn("claude --dangerously-skip-permissions", rendered)
 
     def test_build_cmd_rejects_unknown_agent_without_claude_fallback(self) -> None:

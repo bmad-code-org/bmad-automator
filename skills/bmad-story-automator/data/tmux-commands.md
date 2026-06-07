@@ -190,7 +190,7 @@ tmux capture-pane -t "SESSION" -p -S -100   # Raw capture (use sparingly)
 
 | Variable | Claude | Codex | Gemini | Custom non-Codex |
 |----------|--------|-------|--------|------------------|
-| CLI | `claude --dangerously-skip-permissions` | `codex exec -s workspace-write -c 'approval_policy="never"' -c 'model_reasoning_effort="high"' --disable plugins --disable sqlite --disable shell_snapshot` | `gemini -p` | `STORY_AUTOMATOR_AGENT_<NAME>_COMMAND` |
+| CLI | `claude --dangerously-skip-permissions` | `codex exec -s workspace-write -c 'approval_policy="never"' -c 'model_reasoning_effort="high"' --disable plugins --disable sqlite --disable shell_snapshot` | `gemini --approval-mode yolo -p` | `STORY_AUTOMATOR_AGENT_<NAME>_COMMAND` |
 | Prompt Style | Natural language skill prompt | Natural language skill prompt | Natural language skill prompt | Natural language skill prompt |
 | Timeout Multiplier | 1x (60min) | 1.5x (90min) | 1x (60min) | 1x (60min) |
 | Todo Tracking | ☒/☐ checkboxes | Not supported | best-effort generic monitor | best-effort generic monitor |

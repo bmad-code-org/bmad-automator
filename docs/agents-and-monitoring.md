@@ -76,7 +76,7 @@ Environment details:
 - `STORY_AUTOMATOR_CHILD=true`
 - `AI_AGENT=<claude|codex|gemini|custom-name>`
 - Codex child sessions use isolated `CODEX_HOME` under `/tmp`
-- Gemini child sessions use `gemini -p` by default
+- Gemini child sessions use `gemini --approval-mode yolo -p` by default so autonomous workflows can edit files and run tests
 - custom non-Codex agents can be configured with `STORY_AUTOMATOR_AGENT_<NAME>_COMMAND`; set `STORY_AUTOMATOR_AGENT_<NAME>_PROCESS` only when the monitor should look for a different process name
 
 ## Agent CLI selection
@@ -89,7 +89,7 @@ Built-in command mapping:
 
 - `claude` → `claude --dangerously-skip-permissions`
 - `codex` → `codex exec` / isolated Codex execution path
-- `gemini` → `gemini -p`
+- `gemini` → `gemini --approval-mode yolo -p`
 
 Custom command example:
 
