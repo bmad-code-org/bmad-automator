@@ -478,11 +478,16 @@ def _flag_value(args: list[str], idx: int, flag: str) -> str:
 
 def _raw_agent_selection() -> str:
     value = os.environ.get("AI_AGENT", "").strip().lower()
-    if not value:
-        inferred = _infer_agent_from_command(os.environ.get("AI_COMMAND", ""))
-        if inferred:
-            return inferred
-    return value if value in {"claude", "codex", "gemini", "auto", "runtime"} else "auto"
+    if value:
+        # A non-empty AI_AGENT is authoritative: preserve the normalized name so
+        # agent_cli can use a configured custom command or fail fast on a typo.
+        # Collapsing unknown values to "auto" would silently break env-configured
+        # custom agents and violate the fail-fast contract.
+        return value
+    inferred = _infer_agent_from_command(os.environ.get("AI_COMMAND", ""))
+    if inferred:
+        return inferred
+    return "auto"
 
 
 def _resolve_agent_selection(agent: str, project_root: str) -> str:

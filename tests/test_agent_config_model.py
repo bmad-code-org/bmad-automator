@@ -48,6 +48,19 @@ class AgentCliModelTests(unittest.TestCase):
         self.assertEqual(agent_cli("gemini"), "gemini --approval-mode yolo -p")
         self.assertEqual(agent_cli(" Gemini "), "gemini --approval-mode yolo -p")
 
+    def test_agent_cli_gemini_with_model_keeps_prompt_flag_last(self) -> None:
+        # Regression: `-p` consumes the next token as the prompt, so `--model`
+        # must precede it. Appending `--model` after `-p` makes `-p` swallow it.
+        self.assertEqual(
+            agent_cli("gemini", "gemini-2.5-pro"),
+            "gemini --approval-mode yolo --model gemini-2.5-pro -p",
+        )
+
+    def test_agent_cli_gemini_model_is_quoted(self) -> None:
+        cli = agent_cli("gemini", "gemini pro[exp]")
+        self.assertIn("--model 'gemini pro[exp]'", cli)
+        self.assertTrue(cli.endswith(" -p"), cli)
+
     def test_agent_cli_rejects_unknown_without_custom_command(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsupported agent"):
             agent_cli("not-a-real-agent")
@@ -66,12 +79,49 @@ class AgentCliModelTests(unittest.TestCase):
         with patch.dict(os.environ, {"STORY_AUTOMATOR_AGENT_MY_AGENT_PROCESS": "my-agent-bin"}, clear=False):
             self.assertEqual(agent_process_pattern("my-agent"), "my-agent-bin")
 
+    def test_agent_process_pattern_derives_basename_from_custom_command(self) -> None:
+        # Regression: without an explicit PROCESS override, monitor the real
+        # executable from the configured command, not the alias name.
+        with patch.dict(
+            os.environ,
+            {"STORY_AUTOMATOR_AGENT_GEMINI_PRO_COMMAND": "/usr/local/bin/gemini -p --model pro"},
+            clear=False,
+        ):
+            self.assertEqual(agent_process_pattern("gemini-pro"), "gemini")
+
+    def test_agent_process_pattern_explicit_override_beats_command_basename(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "STORY_AUTOMATOR_AGENT_GEMINI_PRO_COMMAND": "gemini -p",
+                "STORY_AUTOMATOR_AGENT_GEMINI_PRO_PROCESS": "gemini-wrapper",
+            },
+            clear=False,
+        ):
+            self.assertEqual(agent_process_pattern("gemini-pro"), "gemini-wrapper")
+
     def test_env_agent_name_normalizes_for_env_vars(self) -> None:
         self.assertEqual(env_agent_name("gemini-pro preview"), "GEMINI_PRO_PREVIEW")
 
     def test_detect_agent_session_supports_gemini_capture(self) -> None:
         with patch("story_automator.core.tmux_runtime.tmux_show_environment", return_value=""):
             self.assertEqual(detect_agent_session("session", "Gemini CLI ready"), "gemini")
+            for marker in ("gemini -p prompt", "gemini-cli v1", "gemini --approval-mode yolo"):
+                self.assertEqual(detect_agent_session("session", marker), "gemini")
+
+    def test_detect_agent_session_ignores_bare_gemini_mention(self) -> None:
+        # Regression: a stray "Gemini" word in output (e.g. discussing the model)
+        # must not be misread as a Gemini CLI session. Env AI_AGENT stays
+        # authoritative; capture heuristics need CLI-specific markers.
+        with patch("story_automator.core.tmux_runtime.tmux_show_environment", return_value=""):
+            self.assertEqual(
+                detect_agent_session("session", "Comparing Gemini and Claude output quality"),
+                "claude",
+            )
+
+    def test_detect_agent_session_env_remains_authoritative(self) -> None:
+        with patch("story_automator.core.tmux_runtime.tmux_show_environment", return_value="gemini-pro"):
+            self.assertEqual(detect_agent_session("session", "no markers here"), "gemini-pro")
 
     def test_agent_cli_with_model_for_claude(self) -> None:
         self.assertEqual(
@@ -605,8 +655,18 @@ class RawAgentSelectionTests(unittest.TestCase):
             with patch.dict(os.environ, {"AI_AGENT": agent}, clear=False):
                 self.assertEqual(_raw_agent_selection(), agent)
 
-    def test_unknown_agent_falls_back_to_auto(self) -> None:
+    def test_nonempty_unknown_agent_is_preserved_not_collapsed_to_auto(self) -> None:
+        # Regression: a non-empty AI_AGENT (e.g. an env-configured custom agent)
+        # must be preserved verbatim (normalized), not collapsed to "auto".
+        # Collapsing it broke custom agents and violated fail-fast.
         with patch.dict(os.environ, {"AI_AGENT": "gemini-pro"}, clear=False):
+            self.assertEqual(_raw_agent_selection(), "gemini-pro")
+        with patch.dict(os.environ, {"AI_AGENT": " Gemini-Pro "}, clear=False):
+            self.assertEqual(_raw_agent_selection(), "gemini-pro")
+
+    def test_empty_agent_without_command_returns_auto(self) -> None:
+        # Only an empty AI_AGENT with no AI_COMMAND inference should fall back to "auto".
+        with patch.dict(os.environ, {"AI_AGENT": "", "AI_COMMAND": ""}, clear=False):
             self.assertEqual(_raw_agent_selection(), "auto")
 
     def test_infer_gemini_from_command_when_ai_agent_empty(self) -> None:

@@ -76,7 +76,7 @@ Environment details:
 - `STORY_AUTOMATOR_CHILD=true`
 - `AI_AGENT=<claude|codex|gemini|custom-name>`
 - Codex child sessions use isolated `CODEX_HOME` under `/tmp`
-- Gemini child sessions use `gemini --approval-mode yolo -p` by default so autonomous workflows can edit files and run tests
+- Gemini child sessions use `gemini --approval-mode yolo -p` by default so autonomous workflows can edit files and run tests. ⚠️ `yolo` auto-approves every tool call (file writes, shell, tests) without prompting, so only run it in a trusted workspace you control; do not point a yolo Gemini session at untrusted code or a workspace holding secrets
 - custom non-Codex agents can be configured with `STORY_AUTOMATOR_AGENT_<NAME>_COMMAND`; set `STORY_AUTOMATOR_AGENT_<NAME>_PROCESS` only when the monitor should look for a different process name
 
 ## Agent CLI selection

@@ -96,7 +96,11 @@ def agent_cli(agent: str, model: str = "") -> str:
     elif agent == "codex":
         base = "codex exec"
     elif agent == "gemini":
-        base = "gemini --approval-mode yolo -p"
+        # `-p` consumes the next argument as the prompt, so `--model` must come
+        # before it; otherwise `-p` swallows `--model` and the model id is lost.
+        if model:
+            return f"gemini --approval-mode yolo --model {shlex.quote(model)} -p"
+        return "gemini --approval-mode yolo -p"
     else:
         raise ValueError(
             f"unsupported agent {agent!r}; supported agents are claude, codex, gemini, "
@@ -120,6 +124,17 @@ def custom_agent_command(agent: str) -> str:
     return ""
 
 
+def _command_basename(command: str) -> str:
+    value = (command or "").strip()
+    if not value:
+        return ""
+    try:
+        executable = shlex.split(value)[0]
+    except (ValueError, IndexError):
+        return ""
+    return Path(executable).name
+
+
 def normalize_agent_name(agent: str) -> str:
     return (agent or "").strip().lower()
 
@@ -140,6 +155,12 @@ def agent_process_pattern(agent: str) -> str:
         return "codex"
     if agent == "gemini":
         return "gemini"
+    # For env-configured custom agents the alias (e.g. "gemini-pro") rarely names
+    # the real process. Derive the basename from the configured command so the
+    # monitor watches the actual executable instead of the alias.
+    command_basename = _command_basename(custom_agent_command(agent))
+    if command_basename:
+        return command_basename
     return agent
 
 
@@ -401,7 +422,7 @@ def detect_agent_session(session: str, capture: str) -> str:
         return env_agent
     if re.search(r"(?i)OpenAI Codex|codex exec|gpt-[0-9]+-codex|tokens used|codex-cli", capture):
         return "codex"
-    if re.search(r"(?i)Gemini|gemini -p|gemini-cli", capture):
+    if re.search(r"(?i)Gemini CLI|gemini -p|gemini-cli|gemini --approval-mode", capture):
         return "gemini"
     return "claude"
 
@@ -464,6 +485,8 @@ def _spawn_runner(session: str, command: str, selected_agent: str, project_root:
         "CLAUDECODE=",
         "-e",
         "BASH_ENV=",
+        "-e",
+        "GEMINI_CLI_TRUST_WORKSPACE=true",
         *PLACEHOLDER_COMMAND,
     )
     if create_code != 0:
@@ -558,6 +581,8 @@ def _spawn_legacy(session: str, command: str, selected_agent: str, project_root:
         f"AI_AGENT={selected_agent}",
         "-e",
         "CLAUDECODE=",
+        "-e",
+        "GEMINI_CLI_TRUST_WORKSPACE=true",
     )
     if code != 0:
         return (output, code)
