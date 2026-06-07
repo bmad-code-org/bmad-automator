@@ -506,10 +506,11 @@ def _infer_agent_from_command(command: str) -> str:
         executable = Path(shlex.split(value)[0]).name.lower()
     except ValueError:
         return ""
-    if "codex" in executable:
+    token = Path(executable).stem.lower()
+    if token in {"codex", "codex-cli"}:
         return "codex"
-    if "claude" in executable:
+    if token == "claude":
         return "claude"
-    if "gemini" in executable:
+    if token in {"gemini", "gemini-cli"}:
         return "gemini"
     return ""

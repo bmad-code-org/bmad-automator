@@ -686,6 +686,10 @@ class InferAgentFromCommandTests(unittest.TestCase):
     def test_empty_and_unknown_return_empty(self) -> None:
         self.assertEqual(_infer_agent_from_command(""), "")
         self.assertEqual(_infer_agent_from_command("some-other-tool run"), "")
+        self.assertEqual(_infer_agent_from_command("my-gemini-wrapper run"), "")
+        self.assertEqual(_infer_agent_from_command("codextra run"), "")
+        self.assertEqual(_infer_agent_from_command("prefix-claude run"), "")
+        self.assertEqual(_infer_agent_from_command("gemini-wrapper run"), "")
 
 
 class BuildCmdModelFlagTests(unittest.TestCase):
