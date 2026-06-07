@@ -29,7 +29,11 @@ from story_automator.commands.orchestrator_epic_agents import (
     resolve_agent,
 )
 from story_automator.commands.state import cmd_build_state_doc
-from story_automator.commands.tmux import _build_cmd
+from story_automator.commands.tmux import (
+    _build_cmd,
+    _infer_agent_from_command,
+    _raw_agent_selection,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -587,6 +591,43 @@ class AgentCliMissingModelFailFastTests(unittest.TestCase):
             self.assertIn("--model requires a value", err.getvalue())
 
 
+class RawAgentSelectionTests(unittest.TestCase):
+    def test_ai_agent_gemini_is_preserved(self) -> None:
+        with patch.dict(os.environ, {"AI_AGENT": "gemini"}, clear=False):
+            self.assertEqual(_raw_agent_selection(), "gemini")
+
+    def test_ai_agent_gemini_is_normalized(self) -> None:
+        with patch.dict(os.environ, {"AI_AGENT": " GEMINI "}, clear=False):
+            self.assertEqual(_raw_agent_selection(), "gemini")
+
+    def test_known_agents_are_preserved(self) -> None:
+        for agent in ("claude", "codex", "gemini", "auto", "runtime"):
+            with patch.dict(os.environ, {"AI_AGENT": agent}, clear=False):
+                self.assertEqual(_raw_agent_selection(), agent)
+
+    def test_unknown_agent_falls_back_to_auto(self) -> None:
+        with patch.dict(os.environ, {"AI_AGENT": "gemini-pro"}, clear=False):
+            self.assertEqual(_raw_agent_selection(), "auto")
+
+    def test_infer_gemini_from_command_when_ai_agent_empty(self) -> None:
+        with patch.dict(os.environ, {"AI_AGENT": "", "AI_COMMAND": "gemini -p"}, clear=False):
+            self.assertEqual(_raw_agent_selection(), "gemini")
+
+
+class InferAgentFromCommandTests(unittest.TestCase):
+    def test_detects_gemini_executable(self) -> None:
+        self.assertEqual(_infer_agent_from_command("gemini -p"), "gemini")
+        self.assertEqual(_infer_agent_from_command("/usr/local/bin/gemini --model pro"), "gemini")
+
+    def test_detects_claude_and_codex(self) -> None:
+        self.assertEqual(_infer_agent_from_command("claude --dangerously-skip-permissions"), "claude")
+        self.assertEqual(_infer_agent_from_command("codex exec"), "codex")
+
+    def test_empty_and_unknown_return_empty(self) -> None:
+        self.assertEqual(_infer_agent_from_command(""), "")
+        self.assertEqual(_infer_agent_from_command("some-other-tool run"), "")
+
+
 class BuildCmdModelFlagTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -618,6 +659,19 @@ class BuildCmdModelFlagTests(unittest.TestCase):
         stdout = io.StringIO()
         with patch.dict(os.environ, {"PROJECT_ROOT": str(self.project_root), "AI_AGENT": "gemini"}, clear=False), redirect_stdout(stdout):
             code = _build_cmd(["review", "9.1", "--agent", "gemini"])
+        self.assertEqual(code, 0)
+        rendered = stdout.getvalue()
+        self.assertIn("gemini -p", rendered)
+        self.assertNotIn("claude --dangerously-skip-permissions", rendered)
+
+    def test_build_cmd_honors_ai_agent_gemini_without_explicit_flag(self) -> None:
+        """Repro: AI_AGENT=gemini with no `--agent` must still resolve to
+        gemini (not silently fall back to `auto`/claude). Exercises the
+        `_raw_agent_selection` allowlist path that `_build_cmd` takes when
+        no `--agent` flag is supplied."""
+        stdout = io.StringIO()
+        with patch.dict(os.environ, {"PROJECT_ROOT": str(self.project_root), "AI_AGENT": "gemini"}, clear=False), redirect_stdout(stdout):
+            code = _build_cmd(["review", "9.1"])
         self.assertEqual(code, 0)
         rendered = stdout.getvalue()
         self.assertIn("gemini -p", rendered)

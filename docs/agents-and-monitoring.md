@@ -81,9 +81,11 @@ Environment details:
 
 ## Agent CLI selection
 
-Python Story Automator supports Claude, Codex, Gemini, and custom non-Codex child sessions. Unknown agent names fail fast unless a custom command is configured, so typos do not silently run under Claude.
+Python Story Automator supports Claude, Codex, Gemini, and custom non-Codex child sessions at the runtime/dispatch layer. Unknown agent names fail fast unless a custom command is configured, so typos do not silently run under Claude.
 
-Built-in commands:
+Runtime support means the wrapper launches the requested CLI and monitors the requested process. The agent still needs a local tool contract capable of the target workflow. For example, BMAD create/dev/auto/review steps require file reads/writes and often shell/test execution; a Gemini CLI setup without those tools may launch correctly but fail inside the workflow.
+
+Built-in command mapping:
 
 - `claude` → `claude --dangerously-skip-permissions`
 - `codex` → `codex exec` / isolated Codex execution path

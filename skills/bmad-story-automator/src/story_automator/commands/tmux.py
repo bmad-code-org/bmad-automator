@@ -482,7 +482,7 @@ def _raw_agent_selection() -> str:
         inferred = _infer_agent_from_command(os.environ.get("AI_COMMAND", ""))
         if inferred:
             return inferred
-    return value if value in {"claude", "codex", "auto", "runtime"} else "auto"
+    return value if value in {"claude", "codex", "gemini", "auto", "runtime"} else "auto"
 
 
 def _resolve_agent_selection(agent: str, project_root: str) -> str:
@@ -502,4 +502,6 @@ def _infer_agent_from_command(command: str) -> str:
         return "codex"
     if "claude" in executable:
         return "claude"
+    if "gemini" in executable:
+        return "gemini"
     return ""
