@@ -111,7 +111,7 @@ def _usage(code: int) -> int:
     print("  get-epic-stories <epic> [--state-file path]", file=target)
     print("  check-blocking <story_id>", file=target)
     print("  agents-build --state-file path --complexity-file path --output path --config-json '{}'", file=target)
-    print("  agents-resolve (--state-file path | --agents-file path) --story ID --task create|dev|auto|review", file=target)
+    print("  agents-resolve (--state-file path | --agents-file path) --story ID --task create|dev|auto|review|quick-dev", file=target)
     print("  retro-agent --state-file path", file=target)
     return code
 

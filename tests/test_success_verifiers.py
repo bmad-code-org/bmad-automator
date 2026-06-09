@@ -831,6 +831,19 @@ class SuccessVerifierTests(unittest.TestCase):
         self.assertEqual(verifier, "review_completion")
         self.assertTrue(payload["verified"])
 
+    def test_monitor_dispatch_uses_quick_dev_verifier_from_contract(self) -> None:
+        self._write_story("1-2-example", status="done")
+        result = _verify_monitor_completion(
+            "quick-dev",
+            project_root=str(self.project_root),
+            story_key="1.2",
+            output_file="/tmp/session.txt",
+        )
+        self.assertIsNotNone(result)
+        payload, verifier = result or ({}, "")
+        self.assertEqual(verifier, "review_completion")
+        self.assertTrue(payload["verified"])
+
     def test_monitor_dispatch_skips_story_keyed_verifier_without_story_key(self) -> None:
         result = _verify_monitor_completion(
             "review",

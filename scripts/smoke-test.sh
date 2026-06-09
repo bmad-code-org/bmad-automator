@@ -116,6 +116,7 @@ make_required_skills() {
   printf '# checklist\n' >"$root/$skills_root/bmad-dev-story/checklist.md"
 
   make_skill "$root" bmad-retrospective "$skills_root"
+  make_skill "$root" bmad-quick-dev "$skills_root"
 }
 
 make_required_workflow_only_skills() {
@@ -266,6 +267,9 @@ verify_common_install() {
   assert_contains 'build-cmd create {story_id} --agent "$current_agent" --model "$primary_model" --state-file "$state_file"' "$story_dir/steps-c/step-03-execute.md"
   assert_contains 'build-cmd dev {story_id} --agent "$current_agent" --state-file "$state_file"' "$story_dir/steps-c/step-03-execute.md"
   assert_contains 'build-cmd dev {story_id} --agent "$current_agent" --model "$primary_model" --state-file "$state_file"' "$story_dir/steps-c/step-03-execute.md"
+  assert_contains 'build-cmd quick-dev {story_id} --agent "$current_agent" --state-file "$state_file"' "$story_dir/steps-c/step-03-execute.md"
+  assert_contains 'build-cmd quick-dev {story_id} --agent "$current_agent" --model "$primary_model" --state-file "$state_file"' "$story_dir/steps-c/step-03-execute.md"
+  assert_contains 'workflow quick-dev --story-key {story_id} --state-file "$state_file"' "$story_dir/steps-c/step-03-execute.md"
   assert_contains 'build-cmd auto {story_id} --agent "$current_agent" --state-file "$state_file"' "$story_dir/steps-c/step-03a-execute-review.md"
   assert_contains 'build-cmd auto {story_id} --agent "$current_agent" --model "$primary_model" --state-file "$state_file"' "$story_dir/steps-c/step-03a-execute-review.md"
   assert_contains 'should_apply_primary_model' "$story_dir/data/retry-fallback-strategy.md"
@@ -283,10 +287,11 @@ verify_qa_prompts() {
   local root="$1"
   local skills_root="${2:-.claude/skills}"
   local story_dir="$root/$skills_root/bmad-story-automator"
-  local auto_claude auto_codex review_claude retro_claude
+  local auto_claude auto_codex quick_dev_codex review_claude retro_claude
 
   auto_claude="$(cd "$root" && "$story_dir/scripts/story-automator" tmux-wrapper build-cmd auto 5.3 --agent claude)"
   auto_codex="$(cd "$root" && "$story_dir/scripts/story-automator" tmux-wrapper build-cmd auto 5.3 --agent codex)"
+  quick_dev_codex="$(cd "$root" && "$story_dir/scripts/story-automator" tmux-wrapper build-cmd quick-dev 5.3 --agent codex)"
   review_claude="$(cd "$root" && "$story_dir/scripts/story-automator" tmux-wrapper build-cmd review 5.3 --agent claude)"
   retro_claude="$(cd "$root" && "$story_dir/scripts/story-automator" tmux-wrapper build-cmd retro 5 --agent claude)"
   # Per-task model injection on both providers, including the bracketed `[1m]`
@@ -304,6 +309,9 @@ verify_qa_prompts() {
   assert_string_contains "approval_policy=\"never\"" "$auto_codex"
   assert_string_contains "--disable plugins --disable sqlite --disable shell_snapshot" "$auto_codex"
   assert_string_contains "READ this skill first: $skills_root/bmad-qa-generate-e2e-tests/SKILL.md" "$auto_codex"
+  assert_string_contains "READ this skill first: $skills_root/bmad-quick-dev/SKILL.md" "$quick_dev_codex"
+  assert_string_contains "Quick Dev owns planning, coding, test generation, and review" "$quick_dev_codex"
+  assert_string_contains "use subagents for planning, implementation, test generation, and review where useful" "$quick_dev_codex"
   assert_string_contains "READ this skill first: $skills_root/bmad-story-automator-review/SKILL.md" "$review_claude"
   assert_string_contains "auto-fix all issues without prompting" "$review_claude"
   assert_string_contains "READ this skill first: $skills_root/bmad-retrospective/SKILL.md" "$retro_claude"

@@ -50,7 +50,7 @@ result=$("$scripts" monitor-session "$session" --json --agent "$current_agent")
   ```bash
   # Update Story Progress: mark automate done
   tmp_state=$(mktemp)
-  sed "s/^| ${story_id} |.*$/| ${story_id} | done | done | done | - | - | in-progress |/" "{outputFile}" > "$tmp_state" && mv "$tmp_state" "{outputFile}"
+  sed "s/^| ${story_id} |.*$/| ${story_id} | done | done | - | done | - | - | in-progress |/" "{outputFile}" > "$tmp_state" && mv "$tmp_state" "{outputFile}"
   ```
   Display: `[story {N}/{total}] automate -> done`
   → proceed to D
@@ -58,7 +58,7 @@ result=$("$scripts" monitor-session "$session" --json --agent "$current_agent")
   ```bash
   # Update Story Progress: mark automate skipped
   tmp_state=$(mktemp)
-  sed "s/^| ${story_id} |.*$/| ${story_id} | done | done | skip | - | - | in-progress |/" "{outputFile}" > "$tmp_state" && mv "$tmp_state" "{outputFile}"
+  sed "s/^| ${story_id} |.*$/| ${story_id} | done | done | - | skip | - | - | in-progress |/" "{outputFile}" > "$tmp_state" && mv "$tmp_state" "{outputFile}"
   ```
   Display: `[story {N}/{total}] automate -> skip (non-blocking)`
   → proceed to D
@@ -99,7 +99,7 @@ Key points:
   ```bash
   # Update Story Progress: mark code-review done
   tmp_state=$(mktemp)
-  sed "s/^| ${story_id} |.*$/| ${story_id} | done | done | done | done | - | in-progress |/" "{outputFile}" > "$tmp_state" && mv "$tmp_state" "{outputFile}"
+  sed "s/^| ${story_id} |.*$/| ${story_id} | done | done | - | done | done | - | in-progress |/" "{outputFile}" > "$tmp_state" && mv "$tmp_state" "{outputFile}"
   ```
   Display: `[story {N}/{total}] review -> done`
   → E | `incomplete` → count as failed attempt, retry until maxCycles, then CRITICAL escalate (Trigger #8)

@@ -142,7 +142,7 @@ def agents_build_action(args: list[str]) -> int:
     for story in complexity.get("stories", []):
         level = str(story.get("complexity", {}).get("level", "medium")).lower() or "medium"
         tasks = {}
-        for task in ("create", "dev", "auto", "review"):
+        for task in ("create", "dev", "auto", "review", "quick-dev"):
             primary, fallback, model = resolve_agent(config, level, task)
             entry = {
                 "primary": primary,

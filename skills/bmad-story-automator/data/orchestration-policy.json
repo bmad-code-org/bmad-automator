@@ -120,6 +120,29 @@
         "contractFile": "<skills-root>/bmad-story-automator-review/contract.json"
       }
     },
+    "quick-dev": {
+      "label": "quick-dev",
+      "assets": {
+        "skillName": "bmad-quick-dev",
+        "workflowCandidates": ["workflow.md", "workflow.yaml"],
+        "instructionsCandidates": [],
+        "checklistCandidates": ["checklist.md"],
+        "templateCandidates": [],
+        "required": []
+      },
+      "prompt": {
+        "templateFile": "data/prompts/quick-dev.md",
+        "interactionMode": "autonomous",
+        "defaultExtraInstruction": "use subagents for planning, implementation, test generation, and review where useful; complete the story without prompting"
+      },
+      "parse": {
+        "schemaFile": "data/parse/quick-dev.json"
+      },
+      "success": {
+        "verifier": "review_completion",
+        "contractFile": "<skills-root>/bmad-story-automator-review/contract.json"
+      }
+    },
     "retro": {
       "label": "retrospective",
       "assets": {

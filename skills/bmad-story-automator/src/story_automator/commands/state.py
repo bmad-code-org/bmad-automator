@@ -72,6 +72,7 @@ def cmd_build_state_doc(args: list[str]) -> int:
     text = re.sub(
         r"(?m)^overrides:\n(?:(?:\s{2}.*\n)*)",
         "overrides:\n"
+        f"  executionMode: {json.dumps(str(overrides.get('executionMode') or 'split'))}\n"
         f"  skipAutomate: {str(bool(overrides.get('skipAutomate', False))).lower()}\n"
         f"  maxParallel: {int(overrides.get('maxParallel', 1) or 1)}\n",
         text,
@@ -153,12 +154,13 @@ def cmd_build_state_doc(args: list[str]) -> int:
     for key, value in replacements.items():
         text = re.sub(rf"(?m)^{re.escape(key)}:.*$", lambda m, k=key, v=value: f"{k}: {json.dumps(v)}", text)
     story_range = [item for item in config.get("storyRange", []) if isinstance(item, str)]
-    progress_rows = "\n".join(f"| {story_id} | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | pending |" for story_id in story_range)
+    progress_rows = "\n".join(f"| {story_id} | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | pending |" for story_id in story_range)
     body = {
         "{{epicName}}": str(config.get("epicName", "")),
         "{{epic}}": str(config.get("epic", "")),
         "{{storyRange}}": ", ".join(story_range),
         "{{createdAt}}": now,
+        "{{overrides.executionMode}}": str(overrides.get("executionMode") or "split"),
         "{{overrides.skipAutomate}}": str(bool(overrides.get("skipAutomate", False))).lower(),
         "{{overrides.maxParallel}}": str(int(overrides.get("maxParallel", 1) or 1)),
         "{{customInstructions}}": str(config.get("customInstructions", "")),

@@ -197,7 +197,7 @@ def build_agents_file(state_file: str | Path, complexity_file: str | Path, outpu
     for story in complexity_payload.get("stories", []):
         level = str(((story.get("complexity") or {}).get("level")) or "medium").strip().lower() or "medium"
         tasks = {}
-        for task in ("create", "dev", "auto", "review"):
+        for task in ("create", "dev", "auto", "review", "quick-dev"):
             primary, fallback, model = resolve_agent_for_task(config, level, task)
             entry: dict[str, Any] = {
                 "primary": primary,

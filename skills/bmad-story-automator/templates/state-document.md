@@ -13,6 +13,7 @@ createdAt: ""
 # Configuration
 aiCommand: ""  # Deprecated: use agentConfig
 overrides:
+  executionMode: "split"  # split | quick-dev
   skipAutomate: false
   maxParallel: 1
 customInstructions: ""  # User-provided instructions for orchestration
@@ -74,6 +75,7 @@ completedSessions: []
 **Created:** {{createdAt}}
 
 **Overrides:**
+- Execution Mode: {{overrides.executionMode}}
 - Skip Automate: {{overrides.skipAutomate}}
 - Max Parallel: {{overrides.maxParallel}}
 
@@ -84,8 +86,8 @@ completedSessions: []
 
 ## Story Progress
 
-| Story | create-story | dev-story | automate | code-review | git-commit | Status |
-|-------|--------------|-----------|----------|-------------|------------|--------|
+| Story | create-story | dev-story | quick-dev | automate | code-review | git-commit | Status |
+|-------|--------------|-----------|-----------|----------|-------------|------------|--------|
 <!-- Progress rows will be appended here -->
 
 ---
