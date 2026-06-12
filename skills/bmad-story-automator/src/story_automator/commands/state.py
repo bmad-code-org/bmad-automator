@@ -6,16 +6,13 @@ from pathlib import Path
 from typing import Any
 
 from ..core.frontmatter import extract_frontmatter, parse_simple_frontmatter
+from ..core.policy_state_rendering import policy_frontmatter_block, policy_summary_block
 from ..core.runtime_policy import PolicyError, load_policy_for_state, snapshot_effective_policy
 from ..core.agent_config import normalize_model as _model_or_none
 from ..core.state_document import progress_metrics, progress_table_lines
-from ..core.tea_policy import build_run_policy, detect_workflow_track, selected_optional_steps_from_sequence, workflow_track_for_sequence
+from ..core.tea_policy import build_run_policy, detect_workflow_track
 from ..core.utils import count_matches, ensure_dir, file_exists, get_project_root, now_utc, now_utc_z, read_text, write_json
-
-
-def _tea_summary_steps(sequence: list[str]) -> list[str]:
-    tea_steps = {"atdd", "test_automate", "test_review", "nfr", "trace"}
-    return [step.replace("_", "-") for step in sequence if step in tea_steps]
+from ..core.workflow_steps import selected_optional_steps_from_sequence, workflow_track_for_sequence
 
 
 def cmd_build_state_doc(args: list[str]) -> int:
@@ -113,14 +110,14 @@ def cmd_build_state_doc(args: list[str]) -> int:
     )
     custom_instructions = json.dumps(config.get("customInstructions", ""))
     text = re.sub(r"(?m)^customInstructions:.*$", lambda m: f"customInstructions: {custom_instructions}", text)
-    if pinned_track == "tea":
-        tea_frontmatter = (
-            f'workflowTrack: {json.dumps(pinned_track)}\n'
-            f"selectedOptionalSteps: {json.dumps(pinned_optional_steps)}\n"
-            f"manualCheckpoints: {json.dumps(policy_selection['manualCheckpoints'])}\n"
-            f"policyNotes: {json.dumps(policy_selection['notes'])}\n"
-        )
-        text = text.replace("customInstructions: " + custom_instructions + "\n", "customInstructions: " + custom_instructions + "\n" + tea_frontmatter)
+    policy_frontmatter = policy_frontmatter_block(
+        pinned_track,
+        pinned_optional_steps,
+        policy_selection["manualCheckpoints"],
+        policy_selection["notes"],
+    )
+    if policy_frontmatter:
+        text = text.replace("customInstructions: " + custom_instructions + "\n", "customInstructions: " + custom_instructions + "\n" + policy_frontmatter)
     agent_config = config.get("agentConfig")
     if isinstance(agent_config, dict):
         per_task = agent_config.get("perTask", {})
@@ -204,18 +201,12 @@ def cmd_build_state_doc(args: list[str]) -> int:
         "{{overrides.maxParallel}}": str(int(overrides.get("maxParallel", 1) or 1)),
         "{{customInstructions}}": str(config.get("customInstructions", "")),
     }
-    tea_block = ""
-    if pinned_track == "tea":
-        pinned_tea_steps = _tea_summary_steps(pinned_sequence)
-        tea_block_lines = [
-            "**TEA Configuration:**",
-            f"- Pinned TEA Steps: {', '.join(pinned_tea_steps) or 'none'}",
-            f"- Optional Automated Steps: {', '.join(pinned_optional_steps) or 'none'}",
-            f"- Policy Notes: {'; '.join(policy_selection['notes']) or 'none'}",
-            "",
-        ]
-        tea_block = "\n".join(tea_block_lines)
-    body["{{teaConfigurationBlock}}"] = tea_block
+    body["{{teaConfigurationBlock}}"] = policy_summary_block(
+        pinned_track,
+        pinned_sequence,
+        pinned_optional_steps,
+        policy_selection["notes"],
+    )
     for key, value in body.items():
         text = text.replace(key, value)
     text = text.replace("| Story | create-story | dev-story | automate | code-review | git-commit | Status |", progress_header)

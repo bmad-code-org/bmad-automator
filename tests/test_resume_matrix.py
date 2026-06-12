@@ -20,7 +20,9 @@ class ResumeMatrixTests(unittest.TestCase):
     def test_step_03a_handles_review_resume_without_replaying_tea_steps(self) -> None:
         text = STEP_03A.read_text(encoding="utf-8")
         self.assertIn('skip_tea_quality_steps=false', text)
-        self.assertIn('review) skip_tea_quality_steps=true ;;', text)
+        self.assertIn('policy-steps --state-file "$state_file" --group tea-quality', text)
+        self.assertIn('.steps | index($step)', text)
+        self.assertIn('mapfile -t tea_steps < <(echo "$quality_steps_json" | jq -r \'.steps[]\')', text)
         self.assertIn('if [ "$skip_tea_quality_steps" = "true" ]; then', text)
         self.assertIn('break', text)
 

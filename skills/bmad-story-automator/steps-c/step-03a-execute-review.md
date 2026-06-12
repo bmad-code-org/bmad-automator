@@ -110,14 +110,20 @@ if ! echo "$policy_sequence" | jq -e '.ok == true' >/dev/null; then
 fi
 resume_summary=$("$scripts" orchestrator-helper state-summary "$state_file")
 resume_step=$(echo "$resume_summary" | jq -r '.currentStep // ""')
+quality_steps_json=$("$scripts" orchestrator-helper policy-steps --state-file "$state_file" --group tea-quality)
+if ! echo "$quality_steps_json" | jq -e '.ok == true' >/dev/null; then
+  echo "Pinned workflow quality steps unavailable."
+  exit 1
+fi
 resume_mode=false
 skip_tea_quality_steps=false
-case "$resume_step" in
-  test_automate|test_review|nfr|trace) resume_mode=true ;;
-  review) skip_tea_quality_steps=true ;;
-esac
+if [ "$resume_step" = "review" ]; then
+  skip_tea_quality_steps=true
+elif echo "$quality_steps_json" | jq -e --arg step "$resume_step" '.steps | index($step)' >/dev/null; then
+  resume_mode=true
+fi
 resume_gate_open=false
-mapfile -t tea_steps < <(echo "$policy_sequence" | jq -r '.sequence[] | select(. == "test_automate" or . == "test_review" or . == "nfr" or . == "trace")')
+mapfile -t tea_steps < <(echo "$quality_steps_json" | jq -r '.steps[]')
 for idx in "${!tea_steps[@]}"; do
   if [ "$skip_tea_quality_steps" = "true" ]; then
     break
