@@ -222,19 +222,6 @@ def _validate_policy_shape(policy: dict[str, Any]) -> None:
             raise PolicyError(f"invalid required assets for {name}")
 
 
-def _validate_policy_step_references(policy: dict[str, Any]) -> None:
-    workflow = _expect_optional_dict(policy, "workflow")
-    steps = policy.get("steps")
-    if not isinstance(steps, dict):
-        raise PolicyError("steps must be an object")
-    sequence = workflow.get("sequence") or []
-    if not isinstance(sequence, list) or not all(isinstance(item, str) for item in sequence):
-        raise PolicyError("workflow.sequence must be a string array")
-    for step in sequence:
-        if step not in steps:
-            raise PolicyError(f"workflow.sequence references missing step: {step}")
-
-
 def _resolve_policy_paths(policy: dict[str, Any], *, project_root: Path, bundle_root: Path) -> None:
     for name, contract in (policy.get("steps") or {}).items():
         assets = contract.setdefault("assets", {})

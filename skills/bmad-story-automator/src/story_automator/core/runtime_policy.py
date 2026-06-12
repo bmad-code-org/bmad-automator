@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import os
 from pathlib import Path
 from typing import Any
@@ -59,7 +60,8 @@ def load_effective_policy(
         raise
     except OSError as exc:
         raise PolicyError(f"project override unreadable: {override_path}") from exc
-    policy = _deep_merge(_deep_merge(bundled, override), inline_override or {})
+    inline = deepcopy(inline_override) if inline_override is not None else {}
+    policy = _deep_merge(_deep_merge(bundled, override), inline)
     _apply_legacy_env(policy)
     _validate_policy_shape(policy)
     _prune_unreferenced_steps(policy)

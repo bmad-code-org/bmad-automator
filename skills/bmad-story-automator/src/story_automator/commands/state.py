@@ -247,8 +247,32 @@ def cmd_build_run_policy(args: list[str]) -> int:
     except (FileNotFoundError, PolicyError, ValueError) as exc:
         write_json({"ok": False, "error": "policy_invalid", "reason": str(exc)})
         return 1
+    shape_error = _run_policy_selection_error(selection)
+    if shape_error:
+        write_json({"ok": False, "error": "policy_selection_invalid", "reason": shape_error})
+        return 1
     write_json({"ok": True, **selection})
     return 0
+
+
+def _run_policy_selection_error(selection: object) -> str:
+    if not isinstance(selection, dict):
+        return "selection must be an object"
+    required = {"policyOverride", "workflowTrack", "selectedOptionalSteps", "manualCheckpoints", "notes"}
+    missing = sorted(required - set(selection))
+    if missing:
+        return f"missing selection keys: {', '.join(missing)}"
+    if not isinstance(selection["policyOverride"], dict):
+        return "policyOverride must be an object"
+    if selection["workflowTrack"] not in {"standard", "tea"}:
+        return "workflowTrack must be standard or tea"
+    for key in ("selectedOptionalSteps", "manualCheckpoints", "notes"):
+        value = selection[key]
+        if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+            return f"{key} must be a string array"
+    return ""
+
+
 def cmd_detect_workflow_track(args: list[str]) -> int:
     project_root = Path(get_project_root())
     for idx, arg in enumerate(args):

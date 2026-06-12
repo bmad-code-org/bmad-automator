@@ -56,6 +56,21 @@ class RuntimePolicyTests(unittest.TestCase):
         self.assertEqual(policy["workflow"]["sequence"], ["create", "dev", "review"])
         self.assertEqual(policy["workflow"]["repeat"]["review"]["maxCycles"], 3)
 
+    def test_inline_override_is_not_mutated_by_policy_resolution(self) -> None:
+        self._install_tea_skills()
+        inline_override = {
+            "workflow": {"sequence": ["create", "atdd", "dev", "test_automate", "test_review", "trace", "review"]},
+            "steps": tea_steps_override(),
+        }
+        load_effective_policy(str(self.project_root), inline_override=inline_override)
+
+        atdd = inline_override["steps"]["atdd"]
+        self.assertNotIn("files", atdd["assets"])
+        self.assertNotIn("templatePath", atdd["prompt"])
+        self.assertNotIn("templateHash", atdd["prompt"])
+        self.assertNotIn("schemaPath", atdd["parse"])
+        self.assertNotIn("schemaHash", atdd["parse"])
+
     def test_invalid_step_name_rejected(self) -> None:
         self._write_override({"workflow": {"sequence": ["create", "ship"]}, "steps": {"ship": {"success": {"verifier": "session_exit"}}}})
         with self.assertRaises(PolicyError):

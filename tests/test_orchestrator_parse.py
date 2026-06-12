@@ -234,7 +234,15 @@ def _write_tea_assets(project_root: Path) -> None:
     prompts.mkdir(parents=True, exist_ok=True)
     parse.mkdir(parents=True, exist_ok=True)
     (prompts / "atdd.md").write_text("ATDD {{story_id}}\n", encoding="utf-8")
-    (parse / "atdd.json").write_text(json.dumps({"requiredKeys": ["status", "failing_tests_created", "summary", "next_action"], "schema": {"status": "SUCCESS|FAILURE|AMBIGUOUS", "failing_tests_created": "true|false", "summary": "brief description", "next_action": "proceed|retry|escalate"}}), encoding="utf-8")
+    schema = {
+        "requiredKeys": ["status", "summary", "next_action"],
+        "schema": {
+            "status": "SUCCESS|FAILURE|AMBIGUOUS",
+            "summary": "brief description",
+            "next_action": "proceed|retry",
+        },
+    }
+    (parse / "atdd.json").write_text(json.dumps(schema), encoding="utf-8")
 
 
 def _tea_steps_override(project_root: Path) -> dict[str, object]:

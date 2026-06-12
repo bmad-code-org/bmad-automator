@@ -362,6 +362,18 @@ class TeaStateRenderingTests(unittest.TestCase):
         self.assertEqual(payload["selectedOptionalSteps"], [])
         self.assertTrue(any("TEA NFR skill is not installed" in note for note in payload["notes"]))
 
+    def test_build_run_policy_rejects_malformed_selection_shape(self) -> None:
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout), patch(
+            "story_automator.commands.state.build_run_policy",
+            return_value={"policyOverride": {}, "workflowTrack": "tea"},
+        ):
+            code = cmd_build_run_policy(["--config-json", json.dumps({"workflowTrack": "tea"})])
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["error"], "policy_selection_invalid")
+        self.assertIn("missing selection keys", payload["reason"])
+
     def test_build_run_policy_normalizes_selected_optional_steps_on_tea_track(self) -> None:
         install_tea_skills(self.project_root, include_nfr=True, canonical=True, write_assets=False)
         stdout = io.StringIO()
