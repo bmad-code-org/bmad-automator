@@ -168,13 +168,14 @@ def policy_steps_action(args: list[str]) -> int:
 
 
 
-def state_progress_action(args: list[str], *, exists_fn=file_exists) -> int:
+def state_progress_action(args: list[str], *, exists_fn=None) -> int:
     if not args:
         print_json({"ok": False, "error": "file_not_found"})
         return 1
     state_file = args[0]
+    exists = exists_fn or file_exists
     try:
-        if not exists_fn(state_file):
+        if not exists(state_file):
             print_json({"ok": False, "error": "file_not_found"})
             return 1
     except OSError:
