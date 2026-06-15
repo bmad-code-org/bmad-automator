@@ -10,6 +10,7 @@ from pathlib import Path
 from ..core.runtime_layout import active_marker_path, runtime_provider
 from ..core.stop_hooks import HookConfigError, ensure_stop_hook
 from ..core.utils import (
+    atomic_write,
     get_project_slug,
     run_cmd,
     write_json,
@@ -140,10 +141,36 @@ def cmd_ensure_stop_hook(args: list[str]) -> int:
     return 0
 
 
+DEFAULT_MAX_STOP_BLOCKS = 5
+
+
+def _max_stop_blocks() -> int:
+    """Consecutive no-progress Stop-hook blocks before the circuit breaker releases.
+
+    Kept below Claude Code's own ``CLAUDE_CODE_STOP_HOOK_BLOCK_CAP`` (defaults to
+    9) so the orchestrator releases gracefully with an explanation instead of the
+    harness force-ending the turn after a runaway busy-wait. See
+    ``data/stop-hook-recovery.md`` and issue #29.
+    """
+    raw = os.environ.get("STORY_AUTOMATOR_MAX_STOP_BLOCKS", "").strip()
+    if raw.isdigit() and int(raw) > 0:
+        return int(raw)
+    return DEFAULT_MAX_STOP_BLOCKS
+
+
 def cmd_stop_hook(_: list[str]) -> int:
-    sys.stdin.read()
+    raw_input = sys.stdin.read()
     if os.environ.get("STORY_AUTOMATOR_CHILD", "").lower() == "true":
         return 0
+    try:
+        hook_input = json.loads(raw_input) if raw_input.strip() else {}
+    except json.JSONDecodeError:
+        hook_input = {}
+    # Claude Code sets ``stop_hook_active`` when this stop only happened because a
+    # prior Stop hook blocked it (i.e. we are inside a continuation loop). The
+    # documented guard against infinite Stop-hook loops keys off this flag.
+    stop_hook_active = bool(hook_input.get("stop_hook_active"))
+
     marker = active_marker_path()
     if not marker.exists():
         return 0
@@ -151,11 +178,56 @@ def cmd_stop_hook(_: list[str]) -> int:
         payload = json.loads(marker.read_text())
     except json.JSONDecodeError:
         return 0
+    if not isinstance(payload, dict):
+        return 0
     remaining = payload.get("storiesRemaining", 0)
     if isinstance(remaining, str) and remaining.isdigit():
         remaining = int(remaining)
-    if not remaining:
+    if not isinstance(remaining, int) or not remaining:
         return 0
+
+    # --- Circuit breaker -------------------------------------------------
+    # Count consecutive blocks that the orchestrator survived WITHOUT making
+    # real progress, so a long-lived session can't busy-wait an entire quota
+    # window away by stopping-and-resuming in fresh LLM turns (issue #29).
+    #
+    # "Progress" = a story completed (storiesRemaining decreased) OR the
+    # orchestrator bumped the marker heartbeat at a verified step. A healthy
+    # blocking ``monitor-session`` wait makes no stop attempts at all, so it
+    # never accrues blocks; only turn-by-turn polling does.
+    seen_heartbeat = payload.get("stopHookSeenHeartbeat")
+    seen_remaining = payload.get("stopHookSeenRemaining")
+    current_heartbeat = payload.get("heartbeat")
+    progressed = current_heartbeat != seen_heartbeat or (
+        isinstance(seen_remaining, int) and remaining < seen_remaining
+    )
+    if progressed or not stop_hook_active:
+        blocks = 0
+    else:
+        prev = payload.get("stopHookBlocks", 0)
+        blocks = (prev + 1) if isinstance(prev, int) else 1
+
+    payload["stopHookSeenHeartbeat"] = current_heartbeat
+    payload["stopHookSeenRemaining"] = remaining
+
+    if blocks >= _max_stop_blocks():
+        # Release: allow the stop so the session goes idle instead of burning
+        # turns. Reset the counter so a manual/background-triggered resume
+        # starts clean. The user sees why via systemMessage.
+        payload["stopHookBlocks"] = 0
+        _write_marker(marker, payload)
+        message = (
+            f"Story Automator auto-paused after {blocks} consecutive stop-hook blocks "
+            f"with no step progress (circuit breaker). {remaining} stories remain. "
+            "This guards against runaway LLM-turn polling — see "
+            f"{_workflow_doc_relative('stop-hook-recovery.md')}. "
+            "Resume the orchestrator to continue, or investigate why the active step is not progressing."
+        )
+        print(json.dumps({"systemMessage": message}, indent=2))
+        return 0
+
+    payload["stopHookBlocks"] = blocks
+    _write_marker(marker, payload)
     reason = (
         "Story Automator active "
         f"({remaining} stories remaining). Read "
@@ -163,6 +235,15 @@ def cmd_stop_hook(_: list[str]) -> int:
     )
     print(json.dumps({"decision": "block", "reason": reason}, indent=2))
     return 0
+
+
+def _write_marker(path: Path, payload: dict[str, object]) -> None:
+    try:
+        atomic_write(path, json.dumps(payload, indent=2) + "\n")
+    except OSError:
+        # A marker we cannot persist must never crash the Stop hook; the
+        # breaker simply won't advance this cycle.
+        pass
 
 
 def cmd_commit_story(args: list[str]) -> int:

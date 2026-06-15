@@ -71,7 +71,18 @@ state_file="{outputFile}"
 - REQUIRED patterns (verify state after each step)
 - Monitoring failure fallback sequence
 
+**ALSO read `../data/monitoring-pattern.md` BEFORE any tmux interaction.** It carries
+the FORBIDDEN polling table and the single-API-call spawn→monitor→verify cycle. Skipping
+it is how a Stop-hook resume drifts into per-turn `cat /tmp/*.json` / `tmux capture-pane`
+polling that torches a quota window (issue #29). Do NOT spawn or poll any session until it
+is in context.
+
 **Key rule:** Each step (create/dev/auto/review) MUST be executed and monitored separately. NEVER chain steps in loops.
+
+**Waiting rule:** A session is waited on by ONE blocking `monitor-session` call. NEVER
+re-read a monitor output file, `tmux capture-pane`, or `tmux-status-check` in a fresh LLM
+turn to "check if it's done yet" — that is the forbidden polling pattern. If a wait returns
+without a verified artifact, re-spawn `monitor-session` (one call), don't poll by hand.
 
 ## Story Loop
 
@@ -150,6 +161,9 @@ validation=$("$scripts" orchestrator-helper verify-step create {story_id} --stat
   # Update Story Progress: mark create-story done
   tmp_state=$(mktemp)
   sed "s/^| ${story_id} |.*$/| ${story_id} | done | - | - | - | - | in-progress |/" "$state_file" > "$tmp_state" && mv "$tmp_state" "$state_file"
+  # Heartbeat on real progress: resets the Stop-hook circuit breaker so long
+  # stories never trip it (see data/stop-hook-recovery.md). REQUIRED.
+  "$scripts" orchestrator-helper marker heartbeat >/dev/null
   ```
   → proceed to B
 - If `validation.verified == false` AND attempts < 5 → retry with next agent (see `{retryStrategy}`)
@@ -192,6 +206,8 @@ reasons=$(echo "$parsed" | jq -c '.reasons // []')
   # Update Story Progress: mark dev-story done
   tmp_state=$(mktemp)
   sed "s/^| ${story_id} |.*$/| ${story_id} | done | done | - | - | - | in-progress |/" "$state_file" > "$tmp_state" && mv "$tmp_state" "$state_file"
+  # Heartbeat on real progress: resets the Stop-hook circuit breaker. REQUIRED.
+  "$scripts" orchestrator-helper marker heartbeat >/dev/null
   ```
   → proceed to C (next step)
 - If `next_action == "retry"` OR `result.final_state == "crashed"`:

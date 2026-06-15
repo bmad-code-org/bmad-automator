@@ -80,10 +80,14 @@ verified=$(echo "$validation" | jq -r '.verified')
 "$scripts" monitor-session <session_name> [options]
 
 # Options:
-#   --max-polls N     Maximum iterations (default: 30)
-#   --timeout MIN     Overall timeout in minutes (default: 60)
-#   --verbose         Print progress to stderr
-#   --json            Output as JSON instead of CSV
+#   --max-polls N            Maximum iterations (default: 30)
+#   --timeout MIN            Overall timeout in minutes (default: 60)
+#   --completion-rechecks N  Re-confirm a "completed-but-unverified" session
+#                            N times in-process before returning `incomplete`
+#                            (default: 3). Absorbs false-completes inside this
+#                            single call so you never hand-poll.
+#   --verbose                Print progress to stderr
+#   --json                   Output as JSON instead of CSV
 
 # Output (JSON):
 # {"final_state":"completed|crashed|stuck|timeout|incomplete|not_found","output_file":"/tmp/...","exit_reason":"..."}
@@ -123,7 +127,7 @@ After `$scripts monitor-session` returns:
 | final_state | Action |
 |-------------|--------|
 | `completed` | Run step verifier or parser for the active workflow |
-| `incomplete` | **(v2.2)** Session idle but workflow NOT verified → Escalate immediately |
+| `incomplete` | Session idle but workflow NOT verified, even after in-process rechecks → **re-spawn `monitor-session` once** (one blocking call). If a second `incomplete` comes back, escalate. **NEVER** `cat` the output file or `tmux capture-pane` in a fresh turn to "wait" — that is the forbidden polling loop (issue #29). |
 | `crashed` | Check retry count → retry or escalate |
 | `stuck` | Get output → investigate → may need restart |
 | `timeout` | Get output → escalate to user |

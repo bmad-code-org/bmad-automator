@@ -20,6 +20,7 @@
 |------|-----|
 | `orchestrator-rules.md` | Core rules for orchestrator behavior |
 | `execution-patterns.md` | FORBIDDEN patterns - must know before any execution |
+| `monitoring-pattern.md` | FORBIDDEN polling patterns + single-call spawn/monitor/verify cycle — MUST be in context before any tmux interaction (issue #29) |
 | `scripts-reference.md` | Script usage patterns |
 
 ### LOAD ON TRIGGER
@@ -60,7 +61,7 @@
 
 ```
 Starting execution?
-  → Load: orchestrator-rules.md, execution-patterns.md, scripts-reference.md
+  → Load: orchestrator-rules.md, execution-patterns.md, monitoring-pattern.md, scripts-reference.md
 
 Step failed?
   → Load: retry-fallback-strategy.md
