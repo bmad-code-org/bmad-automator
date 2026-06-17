@@ -233,13 +233,21 @@ class TmuxCommandContractTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("--cycle requires a value", stderr.getvalue())
 
-    def test_name_cycle_ignores_earlier_same_flag_tokens(self) -> None:
-        stdout = io.StringIO()
-        with mock.patch.dict(os.environ, {"PROJECT_ROOT": str(self.root)}), redirect_stdout(stdout):
+    def test_name_cycle_rejects_flag_before_story_id(self) -> None:
+        stderr = io.StringIO()
+        with mock.patch.dict(os.environ, {"PROJECT_ROOT": str(self.root)}), redirect_stderr(stderr):
             code = cmd_tmux_wrapper(["name", "--cycle", "ignored", "5.3", "--cycle", "2"])
 
-        self.assertEqual(code, 0)
-        self.assertTrue(stdout.getvalue().strip().endswith("-cycle-r2"))
+        self.assertEqual(code, 1)
+        self.assertIn("Usage: tmux-wrapper", stderr.getvalue())
+
+    def test_name_cycle_rejects_unknown_flag_after_story_id(self) -> None:
+        stderr = io.StringIO()
+        with mock.patch.dict(os.environ, {"PROJECT_ROOT": str(self.root)}), redirect_stderr(stderr):
+            code = cmd_tmux_wrapper(["name", "review", "5", "5.3", "--bogus"])
+
+        self.assertEqual(code, 1)
+        self.assertIn("unknown option for name: --bogus", stderr.getvalue())
 
     def test_project_only_session_filter_rejects_legacy_slug_sessions_without_current_artifacts(self) -> None:
         own = f"sa-{project_slug(str(self.root))}-{project_hash(str(self.root))}-260521-101010-e5-s5-3-review"

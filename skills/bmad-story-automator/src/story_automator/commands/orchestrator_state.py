@@ -96,10 +96,6 @@ def _parse_updates(args: list[str]) -> list[tuple[str, str]] | dict[str, object]
 
 
 def _replace_frontmatter_values(frontmatter: str, updates: list[tuple[str, str]]) -> tuple[str, list[str], dict[str, str], str]:
-    preflight_error = _frontmatter_update_error(frontmatter, updates)
-    if preflight_error:
-        return frontmatter, [], {}, preflight_error
-
     updated: list[str] = []
     applied_values: dict[str, str] = {}
     for key, value in updates:

@@ -70,6 +70,14 @@ class CoreAgentConfigModelTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "agentConfig inline value must be an object/map"):
             extract_agent_config_frontmatter('agentConfig: bad\n')
 
+    def test_agent_config_frontmatter_rejects_empty_leaf_value(self) -> None:
+        with self.assertRaisesRegex(ValueError, "value or nested map"):
+            extract_agent_config_frontmatter("agentConfig:\n  defaultPrimary:\n")
+
+    def test_agent_config_frontmatter_rejects_comment_only_leaf_value(self) -> None:
+        with self.assertRaisesRegex(ValueError, "value or nested map"):
+            extract_agent_config_frontmatter("agentConfig:\n  defaultPrimary:\n    # placeholder\n")
+
     def test_agent_config_frontmatter_rejects_unbalanced_inline_map_braces(self) -> None:
         with self.assertRaisesRegex(ValueError, "balanced braces"):
             extract_agent_config_frontmatter("agentConfig: {defaultPrimary: claude}}\n")

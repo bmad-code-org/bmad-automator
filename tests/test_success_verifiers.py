@@ -1471,6 +1471,15 @@ class SuccessVerifierTests(unittest.TestCase):
         self.assertNotIn(str(self.project_root), serialized)
         self.assertIn("<path:missing-state.md>", payload["reason"])
 
+    def test_validate_story_creation_reason_redaction_is_idempotent(self) -> None:
+        stdout = io.StringIO()
+        missing = self.project_root / "token=abc123" / "missing-state.md"
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_validate_story_creation(["check", "1.2", "--state-file", str(missing)])
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["reason"], "state file unreadable: <path:missing-state.md>")
+
     def test_validate_story_creation_check_returns_compat_schema_on_bad_counts(self) -> None:
         stdout = io.StringIO()
         with patch_env(self.project_root), redirect_stdout(stdout):

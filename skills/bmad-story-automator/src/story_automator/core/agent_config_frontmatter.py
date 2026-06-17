@@ -60,7 +60,12 @@ def _parse_indented_map(lines: list[str]) -> dict[str, object]:
 
         key, raw_value = stripped.split(":", 1)
         parent = stack[-1][1]
-        value = {} if not raw_value.strip() and _has_nested_child(lines, line_index, indent) else _parse_scalar(raw_value)
+        if not raw_value.strip():
+            if not _has_nested_child(lines, line_index, indent):
+                raise ValueError("agentConfig entries require a value or nested map")
+            value = {}
+        else:
+            value = _parse_scalar(raw_value)
         parent[_parse_key(key)] = value
         if isinstance(value, dict) and not raw_value.strip():
             stack.append((indent, value))
@@ -69,7 +74,7 @@ def _parse_indented_map(lines: list[str]) -> dict[str, object]:
 
 def _has_nested_child(lines: list[str], line_index: int, indent: int) -> bool:
     for candidate in lines[line_index + 1 :]:
-        if not candidate.strip():
+        if not _strip_inline_yaml_comment(candidate.rstrip()).strip():
             continue
         return len(candidate) - len(candidate.lstrip(" ")) > indent
     return False

@@ -43,7 +43,7 @@ def cmd_tmux_wrapper(args: list[str]) -> int:
     if action == "spawn":
         return _spawn(args[1:])
     if action == "name":
-        if len(args) < 4:
+        if len(args) < 4 or any(value.startswith("--") for value in args[1:4]):
             return _usage(1)
         try:
             cycle = _cycle_arg(args)
@@ -453,6 +453,8 @@ def _cycle_arg(args: list[str]) -> str:
     cycle = _optional_flag_value(args, "--cycle", start=4)
     if cycle:
         return cycle
+    if len(args) > 4 and args[4].startswith("--"):
+        raise PolicyError(f"unknown option for name: {args[4]}")
     return args[4] if len(args) > 4 else ""
 
 
