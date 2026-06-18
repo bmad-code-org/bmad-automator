@@ -1,6 +1,6 @@
 # Agent Fallback Strategy (v3.0.0)
 
-**Multi-Agent Support:** The orchestrator can use Claude or Codex as AI coding agents, with automatic fallback on failure.
+**Multi-Agent Support:** The orchestrator can use Claude, Codex, Gemini, or configured custom non-Codex commands as AI coding agents, with automatic fallback on failure.
 
 ## Configuration
 
@@ -28,9 +28,13 @@ Agent selection is resolved via the deterministic agents file created in preflig
 | Agent | CLI | Prompt Style | Timeout | Todo Tracking |
 |-------|-----|--------------|---------|---------------|
 | Claude | `claude --dangerously-skip-permissions` | Natural language skill prompt | 60min | ☒/☐ checkboxes |
-| Codex | `codex exec --full-auto` | Natural language prompt | 90min (1.5x) | Not supported |
+| Codex | isolated `codex exec -s workspace-write -c 'approval_policy="never"' -c 'model_reasoning_effort="high"' --disable plugins --disable sqlite --disable shell_snapshot` (under a temp `CODEX_HOME`) | Natural language prompt | 90min (1.5x) | Not supported |
+| Gemini | `gemini --approval-mode yolo -p` (with model: `gemini --approval-mode yolo --model <id> -p`) | Natural language skill prompt | 60min | best-effort via generic monitor |
+| Custom | `STORY_AUTOMATOR_AGENT_<NAME>_COMMAND` | Natural language skill prompt | 60min | best-effort via configured process pattern |
 
-**CRITICAL:** Both Claude and Codex prompts must name the skill/workflow to execute and include the story ID.
+**CRITICAL:** All child-agent prompts must name the skill/workflow to execute and include the story ID.
+
+> ⚠️ **Gemini `--approval-mode yolo` safety:** `yolo` auto-approves every tool call (file edits, shell, test runs) with no prompt, so the child session can modify the workspace and run commands fully autonomously. Only use it for Gemini child sessions in a trusted workspace you control (the orchestrator runs in BMAD-managed repos with `GEMINI_CLI_TRUST_WORKSPACE=true`). Do not point a yolo Gemini session at untrusted code or a workspace holding secrets/credentials.
 
 The `story-automator tmux-wrapper build-cmd` function automatically generates the correct prompt format based on `AI_AGENT` environment variable.
 

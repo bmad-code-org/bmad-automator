@@ -79,21 +79,99 @@ def generate_session_name(step: str, epic: str, story_id: str, cycle: str = "") 
 
 
 def agent_type() -> str:
-    value = os.environ.get("AI_AGENT", "").strip().lower()
-    if value in {"claude", "codex"}:
+    value = normalize_agent_name(os.environ.get("AI_AGENT", ""))
+    # `auto`/`runtime` are meta-selectors, not agent names: resolve them through
+    # the runtime provider so they never flow into agent_cli() (which rejects
+    # them). Built-ins and configured custom agent names pass through verbatim.
+    if value and value not in {"auto", "runtime"}:
         return value
     return runtime_provider()
 
 
 def agent_cli(agent: str, model: str = "") -> str:
+    agent = normalize_agent_name(agent)
     model = (model or "").strip()
-    if agent == "codex":
-        base = "codex exec"
-    else:
+    custom = custom_agent_command(agent)
+    if custom:
+        base = custom
+    elif agent in {"", "claude"}:
         base = "claude --dangerously-skip-permissions"
+    elif agent == "codex":
+        base = "codex exec"
+    elif agent == "gemini":
+        # `-p` consumes the next argument as the prompt, so `--model` must come
+        # before it; otherwise `-p` swallows `--model` and the model id is lost.
+        if model:
+            return f"gemini --approval-mode yolo --model {shlex.quote(model)} -p"
+        return "gemini --approval-mode yolo -p"
+    else:
+        raise ValueError(
+            f"unsupported agent {agent!r}; supported agents are claude, codex, gemini, "
+            f"or set STORY_AUTOMATOR_AGENT_{env_agent_name(agent)}_COMMAND"
+        )
     if model:
-        base = f"{base} --model {shlex.quote(model)}"
+        quoted = shlex.quote(model)
+        if custom and base.endswith(" -p"):
+            # Custom CLIs that end in the prompt flag (e.g. a Gemini-like
+            # `... -p`) consume the next token as the prompt, so `--model` must
+            # precede `-p`; appending it afterwards would let `-p` swallow it.
+            base = f"{base[: -len(' -p')]} --model {quoted} -p"
+        else:
+            base = f"{base} --model {quoted}"
     return base
+
+
+def custom_agent_command(agent: str) -> str:
+    if not agent:
+        return ""
+    for key in (
+        f"STORY_AUTOMATOR_AGENT_{env_agent_name(agent)}_COMMAND",
+        f"AI_COMMAND_{env_agent_name(agent)}",
+    ):
+        value = os.environ.get(key, "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _command_basename(command: str) -> str:
+    value = (command or "").strip()
+    if not value:
+        return ""
+    try:
+        executable = shlex.split(value)[0]
+    except (ValueError, IndexError):
+        return ""
+    return Path(executable).name
+
+
+def normalize_agent_name(agent: str) -> str:
+    return (agent or "").strip().lower()
+
+
+def env_agent_name(agent: str) -> str:
+    clean = re.sub(r"[^A-Za-z0-9]+", "_", agent or "").strip("_")
+    return clean.upper()
+
+
+def agent_process_pattern(agent: str) -> str:
+    agent = normalize_agent_name(agent)
+    if not agent:
+        return "claude"
+    custom = os.environ.get(f"STORY_AUTOMATOR_AGENT_{env_agent_name(agent)}_PROCESS", "").strip()
+    if custom:
+        return custom
+    if agent == "codex":
+        return "codex"
+    if agent == "gemini":
+        return "gemini"
+    # For env-configured custom agents the alias (e.g. "gemini-pro") rarely names
+    # the real process. Derive the basename from the configured command so the
+    # monitor watches the actual executable instead of the alias.
+    command_basename = _command_basename(custom_agent_command(agent))
+    if command_basename:
+        return command_basename
+    return agent
 
 
 def skill_prefix(agent: str) -> str:
@@ -348,11 +426,14 @@ def extract_active_task(capture: str) -> str:
     return active[:80]
 
 
-def detect_codex_session(session: str, capture: str) -> str:
-    if tmux_show_environment(session, "AI_AGENT") == "codex":
-        return "codex"
+def detect_agent_session(session: str, capture: str) -> str:
+    env_agent = normalize_agent_name(tmux_show_environment(session, "AI_AGENT"))
+    if env_agent:
+        return env_agent
     if re.search(r"(?i)OpenAI Codex|codex exec|gpt-[0-9]+-codex|tokens used|codex-cli", capture):
         return "codex"
+    if re.search(r"(?i)Gemini CLI|gemini -p|gemini-cli|gemini --approval-mode", capture):
+        return "gemini"
     return "claude"
 
 
@@ -414,6 +495,8 @@ def _spawn_runner(session: str, command: str, selected_agent: str, project_root:
         "CLAUDECODE=",
         "-e",
         "BASH_ENV=",
+        "-e",
+        "GEMINI_CLI_TRUST_WORKSPACE=true",
         *PLACEHOLDER_COMMAND,
     )
     if create_code != 0:
@@ -508,6 +591,8 @@ def _spawn_legacy(session: str, command: str, selected_agent: str, project_root:
         f"AI_AGENT={selected_agent}",
         "-e",
         "CLAUDECODE=",
+        "-e",
+        "GEMINI_CLI_TRUST_WORKSPACE=true",
     )
     if code != 0:
         return (output, code)
@@ -861,8 +946,9 @@ def _legacy_claude_session_status(
             "session_state": "completed",
         }
 
+    agent = detect_agent_session(session, capture)
     pane_pid = _safe_int(tmux_display(session, "#{pane_pid}"))
-    claude_running = pane_pid > 0 and run_cmd("pgrep", "-P", str(pane_pid), "-f", "claude")[1] == 0
+    agent_running = _pane_has_agent_descendant(pane_pid, agent_process_pattern(agent))
     activity_detected = bool(
         re.search(
             r"(?i)ctrl\+c to interrupt|Musing|Thinking|Working|Running|Loading|Beaming|Galloping|Razzmatazzing|Creating|⏺|✻|·",
@@ -870,8 +956,8 @@ def _legacy_claude_session_status(
         )
     )
 
-    if activity_detected or claude_running:
-        active_task = extract_active_task(capture) or "Claude working"
+    if activity_detected or agent_running:
+        active_task = extract_active_task(capture) or f"{agent.title()} working"
         wait_estimate = estimate_wait(active_task, todos_done, todos_total)
         _save_legacy_state(
             state_path,
@@ -934,7 +1020,7 @@ def _legacy_heartbeat_check(session: str, selected_agent: str) -> tuple[str, flo
     pane_pid = _safe_int(tmux_display(session, "#{pane_pid}"))
     if pane_pid <= 0:
         return ("completed" if prompt == "true" else "dead", 0.0, "", prompt)
-    pattern = "codex" if selected_agent == "codex" else "claude"
+    pattern = agent_process_pattern(selected_agent)
     agent_pid = _find_agent_pid(str(pane_pid), pattern, 0)
     if not agent_pid:
         return ("completed" if prompt == "true" else "dead", 0.0, "", prompt)
@@ -1250,6 +1336,62 @@ def _find_agent_pid(parent: str, pattern: str, depth: int) -> str:
         if nested:
             return nested
     return ""
+
+
+def _pane_has_agent_descendant(pane_pid: int, pattern: str) -> bool:
+    """Return True if any process matching ``pattern`` is a descendant of ``pane_pid``.
+
+    ``pgrep -P`` only matches direct children, so it misses agents launched
+    through a wrapper or shell (the agent then runs as a grandchild). Here we
+    collect candidate PIDs by command pattern and confirm ancestry by walking
+    parent PIDs back up to ``pane_pid``.
+    """
+    if pane_pid <= 0:
+        return False
+    output, code = run_cmd("pgrep", "-f", pattern)
+    if code != 0:
+        return False
+    for line in output.splitlines():
+        candidate = _safe_int(line.strip())
+        if candidate <= 0 or candidate == pane_pid:
+            continue
+        if _pid_has_ancestor(candidate, pane_pid):
+            return True
+    return False
+
+
+def _pid_has_ancestor(pid: int, ancestor: int, max_depth: int = 32) -> bool:
+    current = pid
+    seen: set[int] = set()
+    for _ in range(max_depth):
+        ppid = _process_ppid(current)
+        if ppid <= 0 or ppid == current or ppid in seen:
+            return False
+        if ppid == ancestor:
+            return True
+        seen.add(ppid)
+        current = ppid
+    return False
+
+
+def _process_ppid(pid: int) -> int:
+    """Return the parent PID of ``pid`` (prefer ``/proc`` on Linux, fall back to ``ps``)."""
+    try:
+        raw = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        raw = ""
+    if raw:
+        # Format: "pid (comm) state ppid ...". comm may contain spaces or
+        # parentheses, so split after the final ')' to read state/ppid safely.
+        rparen = raw.rfind(")")
+        if rparen != -1:
+            fields = raw[rparen + 1:].split()
+            if len(fields) >= 2:
+                return _safe_int(fields[1])
+    output, code = run_cmd("ps", "-o", "ppid=", "-p", str(pid))
+    if code != 0:
+        return 0
+    return _safe_int(output.strip())
 
 
 def _process_cpu(pid: int) -> float:

@@ -97,7 +97,11 @@ def cmd_tmux_wrapper(args: list[str]) -> int:
                 idx += 2
                 continue
             idx += 1
-        print(agent_cli(agent_type(), model))
+        try:
+            print(agent_cli(agent_type(), model))
+        except ValueError as exc:
+            print(str(exc), file=__import__("sys").stderr)
+            return 1
         return 0
     if action == "skill-prefix":
         print(skill_prefix(agent_type()))
@@ -201,9 +205,16 @@ def _build_cmd(args: list[str]) -> int:
         return 1
     ai_command = os.environ.get("AI_COMMAND", "").strip()
     if ai_command and not os.environ.get("AI_AGENT"):
-        cli = ai_command
+        if agent == "gemini":
+            cli = agent_cli(agent, model)
+        else:
+            cli = ai_command
     elif agent != "codex":
-        cli = agent_cli(agent, model)
+        try:
+            cli = agent_cli(agent, model)
+        except ValueError as exc:
+            print(str(exc), file=__import__("sys").stderr)
+            return 1
     else:
         cli = "codex exec"
     quoted_prompt = shlex.quote(prompt)
@@ -470,11 +481,16 @@ def _flag_value(args: list[str], idx: int, flag: str) -> str:
 
 def _raw_agent_selection() -> str:
     value = os.environ.get("AI_AGENT", "").strip().lower()
-    if not value:
-        inferred = _infer_agent_from_command(os.environ.get("AI_COMMAND", ""))
-        if inferred:
-            return inferred
-    return value if value in {"claude", "codex", "auto", "runtime"} else "auto"
+    if value:
+        # A non-empty AI_AGENT is authoritative: preserve the normalized name so
+        # agent_cli can use a configured custom command or fail fast on a typo.
+        # Collapsing unknown values to "auto" would silently break env-configured
+        # custom agents and violate the fail-fast contract.
+        return value
+    inferred = _infer_agent_from_command(os.environ.get("AI_COMMAND", ""))
+    if inferred:
+        return inferred
+    return "auto"
 
 
 def _resolve_agent_selection(agent: str, project_root: str) -> str:
@@ -490,8 +506,11 @@ def _infer_agent_from_command(command: str) -> str:
         executable = Path(shlex.split(value)[0]).name.lower()
     except ValueError:
         return ""
-    if "codex" in executable:
+    token = Path(executable).stem.lower()
+    if token in {"codex", "codex-cli"}:
         return "codex"
-    if "claude" in executable:
+    if token == "claude":
         return "claude"
+    if token in {"gemini", "gemini-cli"}:
+        return "gemini"
     return ""

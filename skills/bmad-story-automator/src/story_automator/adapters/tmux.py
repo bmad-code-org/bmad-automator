@@ -7,7 +7,7 @@ from ..core.common import ensure_dir, run_cmd, trim_lines
 from ..core.tmux_runtime import (
     agent_cli,
     agent_type,
-    detect_codex_session,
+    detect_agent_session,
     estimate_wait,
     extract_active_task,
     generate_session_name,

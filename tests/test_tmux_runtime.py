@@ -10,9 +10,12 @@ from pathlib import Path
 
 from story_automator.core.tmux_runtime import (
     PaneSnapshot,
+    agent_type,
     _check_prompt_visible,
     _claude_completion_marker_present,
     _legacy_heartbeat_check,
+    _pane_has_agent_descendant,
+    _pid_has_ancestor,
     _reconcile_runner_state,
     _runner_file_content,
     cleanup_runtime_artifacts,
@@ -480,6 +483,104 @@ class TmuxRuntimeStateTests(unittest.TestCase):
         self.assertEqual(cpu, 0.5)
         self.assertEqual(pid, "12")
         self.assertEqual(prompt, "false")
+
+    def test_legacy_heartbeat_uses_selected_agent_process_pattern(self) -> None:
+        with (
+            mock.patch("story_automator.core.tmux_runtime.tmux_has_session", return_value=True),
+            mock.patch("story_automator.core.tmux_runtime._capture_text", return_value="working"),
+            mock.patch("story_automator.core.tmux_runtime.tmux_display", return_value="10"),
+            mock.patch("story_automator.core.tmux_runtime._find_agent_pid", return_value="12") as find_pid,
+            mock.patch("story_automator.core.tmux_runtime._process_cpu", return_value=0.5),
+        ):
+            status, _cpu, pid, _prompt = _legacy_heartbeat_check("sa-test-legacy-gemini", "gemini")
+
+        self.assertEqual(status, "alive")
+        self.assertEqual(pid, "12")
+        find_pid.assert_called_once_with("10", "gemini", 0)
+
+
+class AgentTypeResolutionTests(unittest.TestCase):
+    def test_auto_resolves_through_runtime_provider(self) -> None:
+        with (
+            mock.patch.dict(os.environ, {"AI_AGENT": "auto"}, clear=False),
+            mock.patch("story_automator.core.tmux_runtime.runtime_provider", return_value="codex"),
+        ):
+            self.assertEqual(agent_type(), "codex")
+
+    def test_runtime_resolves_through_runtime_provider(self) -> None:
+        with (
+            mock.patch.dict(os.environ, {"AI_AGENT": " RUNTIME "}, clear=False),
+            mock.patch("story_automator.core.tmux_runtime.runtime_provider", return_value="claude"),
+        ):
+            self.assertEqual(agent_type(), "claude")
+
+    def test_empty_resolves_through_runtime_provider(self) -> None:
+        with (
+            mock.patch.dict(os.environ, {"AI_AGENT": ""}, clear=False),
+            mock.patch("story_automator.core.tmux_runtime.runtime_provider", return_value="claude"),
+        ):
+            self.assertEqual(agent_type(), "claude")
+
+    def test_builtin_agent_passes_through_without_provider(self) -> None:
+        with (
+            mock.patch.dict(os.environ, {"AI_AGENT": " Gemini "}, clear=False),
+            mock.patch(
+                "story_automator.core.tmux_runtime.runtime_provider",
+                side_effect=AssertionError("runtime_provider must not be consulted for explicit agents"),
+            ),
+        ):
+            self.assertEqual(agent_type(), "gemini")
+
+    def test_custom_agent_name_passes_through(self) -> None:
+        with (
+            mock.patch.dict(os.environ, {"AI_AGENT": "gemini-pro"}, clear=False),
+            mock.patch(
+                "story_automator.core.tmux_runtime.runtime_provider",
+                side_effect=AssertionError("runtime_provider must not be consulted for explicit agents"),
+            ),
+        ):
+            self.assertEqual(agent_type(), "gemini-pro")
+
+
+class PaneDescendantDetectionTests(unittest.TestCase):
+    def test_detects_grandchild_agent_via_ancestry_walk(self) -> None:
+        # pane(100) -> shell(200) -> claude(300); pgrep -f matches only the grandchild.
+        parents = {300: 200, 200: 100}
+        with (
+            mock.patch("story_automator.core.tmux_runtime.run_cmd", return_value=("300\n", 0)),
+            mock.patch(
+                "story_automator.core.tmux_runtime._process_ppid",
+                side_effect=lambda pid: parents.get(pid, 0),
+            ),
+        ):
+            self.assertTrue(_pane_has_agent_descendant(100, "claude"))
+
+    def test_ignores_matching_process_outside_pane_tree(self) -> None:
+        # An unrelated claude process whose ancestry never reaches the pane pid.
+        parents = {300: 999, 999: 1}
+        with (
+            mock.patch("story_automator.core.tmux_runtime.run_cmd", return_value=("300\n", 0)),
+            mock.patch(
+                "story_automator.core.tmux_runtime._process_ppid",
+                side_effect=lambda pid: parents.get(pid, 0),
+            ),
+        ):
+            self.assertFalse(_pane_has_agent_descendant(100, "claude"))
+
+    def test_no_match_when_pgrep_finds_nothing(self) -> None:
+        with mock.patch("story_automator.core.tmux_runtime.run_cmd", return_value=("", 1)):
+            self.assertFalse(_pane_has_agent_descendant(100, "claude"))
+
+    def test_invalid_pane_pid_short_circuits(self) -> None:
+        self.assertFalse(_pane_has_agent_descendant(0, "claude"))
+
+    def test_pid_has_ancestor_handles_cycles(self) -> None:
+        # Defensive: a self/looping parent chain must terminate, not hang.
+        with mock.patch(
+            "story_automator.core.tmux_runtime._process_ppid",
+            side_effect=lambda pid: pid,
+        ):
+            self.assertFalse(_pid_has_ancestor(300, 100))
 
 
 if __name__ == "__main__":

@@ -111,7 +111,7 @@ Current caveat: the official registry sets `automator` to `default_channel: next
 
 - This is an orchestrator, not a correctness guarantee. Bad planning artifacts still produce bad implementation runs.
 - The npm installer writes the skill into every supported dependency skill root that is complete: `.agents/skills`, `.claude/skills`, and/or `.codex/skills`.
-- Child sessions can use Claude or Codex depending on agent configuration.
+- Child sessions can use Claude, Codex, Gemini, or a custom non-Codex agent command depending on agent configuration.
 - Retrospectives inherit the configured primary agent by default, and can be overridden explicitly via `agentConfig`.
 - The automator expects sprint planning to be complete before it starts.
 - Review completion is gated by verification, not by child-session exit alone.
@@ -195,7 +195,7 @@ Host requirements:
 
 - `python3` 3.11+
 - `tmux`
-- Claude Code or Codex runtime access
+- Claude Code, Codex, Gemini CLI, or configured custom-agent runtime access
 - macOS, Linux, or Windows via WSL
 
 Target project requirements:
@@ -207,7 +207,7 @@ Target project requirements:
   - `bmad-retrospective`
   - optional `bmad-qa-generate-e2e-tests`
 
-Claude-only, Codex-only, and mixed projects are all supported. The installer updates each supported root that already contains the required dependency `SKILL.md` files.
+Claude-only, Codex-only, Gemini-assisted, custom-agent, and mixed projects are all supported. The installer updates each supported root that already contains the required dependency `SKILL.md` files.
 
 Dependency skill internals such as `workflow.md` are optional. If the QA skill is missing, install still succeeds. Run Story Automator with `Skip Automate = true` unless the QA skill is installed.
 

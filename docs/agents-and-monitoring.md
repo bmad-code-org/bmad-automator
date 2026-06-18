@@ -7,7 +7,7 @@ This doc explains how Story Automator chooses child agents, builds child-session
 There are two distinct agent layers:
 
 - the orchestrator itself, which runs from a supported top-level agent session
-- child sessions, which can run Claude or Codex depending on the agent plan
+- child sessions, which can run Claude, Codex, Gemini, or configured custom non-Codex agent commands depending on the agent plan
 
 Agent selection is driven by:
 
@@ -74,14 +74,29 @@ sequenceDiagram
 Environment details:
 
 - `STORY_AUTOMATOR_CHILD=true`
-- `AI_AGENT=<claude|codex>`
+- `AI_AGENT=<claude|codex|gemini|custom-name>`
 - Codex child sessions use isolated `CODEX_HOME` under `/tmp`
+- Gemini child sessions use `gemini --approval-mode yolo -p` by default so autonomous workflows can edit files and run tests. ⚠️ `yolo` auto-approves every tool call (file writes, shell, tests) without prompting, so only run it in a trusted workspace you control; do not point a yolo Gemini session at untrusted code or a workspace holding secrets
+- custom non-Codex agents can be configured with `STORY_AUTOMATOR_AGENT_<NAME>_COMMAND`; set `STORY_AUTOMATOR_AGENT_<NAME>_PROCESS` only when the monitor should look for a different process name
 
-## Claude vs Codex
+## Agent CLI selection
 
-Python Story Automator does support Codex child sessions.
+Python Story Automator supports Claude, Codex, Gemini, and custom non-Codex child sessions at the runtime/dispatch layer. Unknown agent names fail fast unless a custom command is configured, so typos do not silently run under Claude.
 
-That is a major difference from the older Go README guidance.
+Runtime support means the wrapper launches the requested CLI and monitors the requested process. The agent still needs a local tool contract capable of the target workflow. For example, BMAD create/dev/auto/review steps require file reads/writes and often shell/test execution; a Gemini CLI setup without those tools may launch correctly but fail inside the workflow.
+
+Built-in command mapping:
+
+- `claude` → `claude --dangerously-skip-permissions`
+- `codex` → `codex exec` / isolated Codex execution path
+- `gemini` → `gemini --approval-mode yolo -p`
+
+Custom command example:
+
+```bash
+export STORY_AUTOMATOR_AGENT_GLM_COMMAND='glm-cli --prompt'
+export STORY_AUTOMATOR_AGENT_GLM_PROCESS='glm-cli' # optional; defaults to agent name
+```
 
 Important Codex-specific behavior:
 
