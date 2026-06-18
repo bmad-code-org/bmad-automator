@@ -13,21 +13,25 @@ FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
 
 def _resolve_bmad_method(env: dict[str, str] | None = None) -> dict[str, str]:
-    result = subprocess.run(
-        [
-            "npm",
-            "view",
-            BMAD_METHOD_NPM_SPEC,
-            "version",
-            "dist.integrity",
-            "--json",
-        ],
-        env=env,
-        text=True,
-        check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
+    try:
+        result = subprocess.run(
+            [
+                "npm",
+                "view",
+                BMAD_METHOD_NPM_SPEC,
+                "version",
+                "dist.integrity",
+                "--json",
+            ],
+            env=env,
+            text=True,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise SmokeError(f"npm view timed out for {BMAD_METHOD_NPM_SPEC}") from exc
     metadata = json.loads(result.stdout)
     version = metadata.get("version")
     integrity = metadata.get("dist", {}).get("integrity") or metadata.get(

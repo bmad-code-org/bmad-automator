@@ -36,17 +36,22 @@ def run(
     env: dict[str, str] | None = None,
     capture: bool = False,
     check: bool = True,
+    timeout_seconds: float | None = 900,
 ) -> subprocess.CompletedProcess[str]:
     print(f"+ ({cwd}) {' '.join(args)}", flush=True)
-    return subprocess.run(
-        args,
-        cwd=cwd,
-        env=env,
-        text=True,
-        check=check,
-        stdout=subprocess.PIPE if capture else None,
-        stderr=subprocess.STDOUT if capture else None,
-    )
+    try:
+        return subprocess.run(
+            args,
+            cwd=cwd,
+            env=env,
+            text=True,
+            check=check,
+            stdout=subprocess.PIPE if capture else None,
+            stderr=subprocess.STDOUT if capture else None,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise SmokeError(f"command timed out after {timeout_seconds}s: {' '.join(args)}") from exc
 
 
 def ensure_tool(name: str) -> None:

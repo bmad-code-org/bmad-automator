@@ -159,7 +159,7 @@ git status --short --branch
 
 ### Decisions And Assumptions
 
-- Tarball identity is now bound to `npm run pack:assert` or an explicit `npm run pack:identity`.
+- Tarball identity is now bound to `npm run pack:assert`.
 - Multi-epic retrospective coverage is now bound to `npm run smoke:finish-loop -- --scenario multi-epic`, or to `npm run smoke:finish-loop` if that command always includes the scenario.
 - Phase 03 now has explicit marker/root and status/source-of-truth helper matrix rows and TODOs.
 - Phase 04 now has explicit state/artifact and source-mismatch matrix rows and TODOs.
@@ -310,10 +310,10 @@ wc -l tests/test_runtime_helper_contracts.py scripts/smoke_prep/package_contract
 
 ### Decisions And Assumptions
 
-- `smoke:contracts` intentionally composes focused unittest modules instead of adding a large shell runner, and fails if any selected contract test is skipped.
+- `smoke:contracts` intentionally composes focused unittest modules instead of adding a large shell runner. Unexpected skipped tests fail the gate; expected `tmux not available` skips pass and reduce full runner coverage.
 - `monitor-session` remains a JSON-contract command: crashed, timeout, incomplete, and not_found states can return process exit code `0`.
 - `parse-output` JSON-decode handling is defensive because `extract_json_line` returns only JSON-valid candidate lines; no-json and schema-invalid payloads are the deterministic failure cases.
-- `tmux-wrapper spawn` success/crash coverage runs in `SA_TMUX_RUNTIME=runner`; tmux must be available because skipped contract tests fail the gate.
+- `tmux-wrapper spawn` success/crash coverage runs in `SA_TMUX_RUNTIME=runner`; tmux is preferred for complete coverage, but expected `tmux not available` skips do not fail the gate.
 
 ### Blockers Or Risks
 

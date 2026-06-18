@@ -27,7 +27,7 @@ def resolve_workspace(root: Path, workspace_arg: str) -> Path:
         raise SmokeError("--workspace cannot be the repo root")
 
     check = subprocess.run(
-        ["git", "check-ignore", "-q", relative.as_posix()],
+        ["git", "check-ignore", "-q", "--", relative.as_posix()],
         cwd=root,
         check=False,
     )

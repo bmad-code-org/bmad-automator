@@ -15,16 +15,21 @@ from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = REPO_ROOT / "scripts"
-sys.path.insert(0, str(SCRIPTS))
 
 
 def load_script_module(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"cannot load script module: {path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    with patch.object(sys, "path", [str(SCRIPTS), *sys.path]):
+        spec = importlib.util.spec_from_file_location(name, path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"cannot load script module: {path}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+
+def import_script_package(name: str):
+    with patch.object(sys, "path", [str(SCRIPTS), *sys.path]):
+        return __import__(name, fromlist=["*"])
 
 
 class VersionAlignmentScriptTests(unittest.TestCase):
@@ -174,6 +179,17 @@ class DeterministicSmokeEnvTests(unittest.TestCase):
 
 
 class SmokePrepCliTests(unittest.TestCase):
+    def test_smoke_input_check_malformed_payload_returns_clean_failure(self) -> None:
+        module = load_script_module("check_smoke_inputs", SCRIPTS / "check-smoke-inputs.py")
+        stderr = io.StringIO()
+
+        with patch.object(module, "smoke_inputs", return_value={"gunz": {}}), redirect_stderr(stderr):
+            code = module.main()
+
+        self.assertEqual(code, 1)
+        self.assertIn("smoke input determinism failed: malformed payload:", stderr.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
+
     def test_value_error_returns_clean_failure(self) -> None:
         from smoke_prep import cli
 
@@ -193,6 +209,49 @@ class SmokePrepCliTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("smoke prep failed: bad smoke input", stderr.getvalue())
         self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_shared_process_run_times_out_cleanly(self) -> None:
+        process = import_script_package("smoke_prep.process")
+
+        with patch.object(
+            process.subprocess,
+            "run",
+            side_effect=process.subprocess.TimeoutExpired(["git", "fetch"], 900),
+        ):
+            with self.assertRaisesRegex(process.SmokeError, "command timed out after 900s: git fetch"):
+                process.run(["git", "fetch"], cwd=REPO_ROOT)
+
+    def test_npm_view_timeout_becomes_smoke_error(self) -> None:
+        inputs = import_script_package("smoke_prep.inputs")
+
+        with patch.object(
+            inputs.subprocess,
+            "run",
+            side_effect=inputs.subprocess.TimeoutExpired(["npm", "view"], 60),
+        ):
+            with self.assertRaisesRegex(inputs.SmokeError, "npm view timed out"):
+                inputs._resolve_bmad_method({})
+
+    def test_npm_pack_timeout_becomes_smoke_error(self) -> None:
+        package_contracts = import_script_package("smoke_prep.package_contracts")
+
+        with patch.object(
+            package_contracts.subprocess,
+            "run",
+            side_effect=package_contracts.subprocess.TimeoutExpired(["npm", "pack"], 900),
+        ):
+            with self.assertRaisesRegex(package_contracts.SmokeError, "npm pack timed out after 900s"):
+                package_contracts._npm_pack_json(REPO_ROOT, ["--json"], {})
+
+    def test_workspace_check_ignore_uses_path_delimiter(self) -> None:
+        workspace = import_script_package("smoke_prep.workspace")
+
+        with patch.object(workspace.subprocess, "run") as run:
+            run.return_value.returncode = 0
+            resolved = workspace.resolve_workspace(REPO_ROOT, ".smoke")
+
+        self.assertEqual(resolved, (REPO_ROOT / ".smoke").resolve())
+        self.assertEqual(run.call_args.args[0], ["git", "check-ignore", "-q", "--", ".smoke"])
 
 
 class SmokeModesScriptTests(unittest.TestCase):

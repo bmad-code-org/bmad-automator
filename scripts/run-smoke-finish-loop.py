@@ -269,7 +269,6 @@ class FinishLoopSmokeRunner:
     def _replace_progress(self, state: Path, story_id: str, *cells: str) -> None:
         row = f"| {story_id} | " + " | ".join(cells) + " |"
         text = state.read_text(encoding="utf-8")
-        import re
 
         state.write_text(re.sub(rf"(?m)^\| {re.escape(story_id)} \|.*$", row, text), encoding="utf-8")
 

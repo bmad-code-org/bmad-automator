@@ -10,6 +10,9 @@ def prepare_gunz(workspace: Path, gunz_dir: Path) -> None:
     step("Prepare pinned gunz smoke repo")
     if gunz_dir.exists():
         print(f"reuse existing clone: {gunz_dir}")
+        origin = run(["git", "remote", "get-url", "origin"], cwd=gunz_dir, capture=True).stdout.strip()
+        if origin != REPO_URL:
+            raise SmokeError(f"existing clone origin mismatch: expected {REPO_URL}, got {origin}")
     else:
         run(
             [

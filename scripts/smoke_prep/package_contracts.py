@@ -197,15 +197,19 @@ def verify_installed_package(gunz_dir: Path, identity: dict, workspace: Path) ->
 
 
 def _npm_pack_json(root: Path, args: list[str], env: dict[str, str] | None) -> dict:
-    result = subprocess.run(
-        ["npm", "pack", *args],
-        cwd=root,
-        env=env,
-        text=True,
-        check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
+    try:
+        result = subprocess.run(
+            ["npm", "pack", *args],
+            cwd=root,
+            env=env,
+            text=True,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=900,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise SmokeError(f"npm pack timed out after 900s: {' '.join(args)}") from exc
     try:
         payload = json.loads(result.stdout)
     except json.JSONDecodeError as exc:

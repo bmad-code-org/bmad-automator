@@ -13,6 +13,8 @@ from story_automator.core.sprint import sprint_status_epic
 from story_automator.core.story_keys import StoryKey, normalize_story_key, normalize_story_key_for_epic
 from story_automator.core.utils import file_exists, get_project_root, print_json, read_text, trim_lines
 
+STORY_HEADER_RE = re.compile(r"^###\s+(?:(?:Story\s+)?(\d+\.\d+)|Story\s+([^:]+)):", re.IGNORECASE)
+
 
 def check_epic_complete_action(args: list[str]) -> int:
     try:
@@ -106,9 +108,9 @@ def check_blocking_action(args: list[str]) -> int:
         dependents: list[str] = []
         current_story = ""
         for line in trim_lines(read_text(epic_file)):
-            match = re.match(r"^###\s+Story\s+([^:]+):", line)
+            match = STORY_HEADER_RE.match(line)
             if match:
-                candidate_story = match.group(1).strip()
+                candidate_story = (match.group(1) or match.group(2) or "").strip()
                 current_story = candidate_story if _story_matches_epic(project_root, epic, candidate_story) else ""
                 continue
             if current_story and re.search(r"(?i)Dependencies:|\*\*Dependencies\*\*:", line):
@@ -224,10 +226,9 @@ def find_epic_file(epic: str) -> str:
 
 
 def _epic_file_has_story(epic_file: Path, epic: str, *, project_root: str) -> bool:
-    story_re = re.compile(r"^###\s+Story\s+([^:]+):")
     for line in trim_lines(read_text(epic_file)):
-        match = story_re.match(line)
-        if match and _story_matches_epic(project_root, epic, match.group(1).strip()):
+        match = STORY_HEADER_RE.match(line)
+        if match and _story_matches_epic(project_root, epic, (match.group(1) or match.group(2) or "").strip()):
             return True
     return False
 
@@ -237,15 +238,14 @@ def _epic_json_value(epic: str) -> int | str:
 
 
 def _story_ids_from_epic_file(epic_file: str, epic: str) -> list[str]:
-    story_re = re.compile(r"^###\s+Story\s+([^:]+):")
     stories: list[str] = []
     seen_ids: set[str] = set()
     project_root = get_project_root()
     for line in trim_lines(read_text(epic_file)):
-        match = story_re.match(line)
+        match = STORY_HEADER_RE.match(line)
         if not match:
             continue
-        story = match.group(1).strip()
+        story = (match.group(1) or match.group(2) or "").strip()
         norm = normalize_story_key_for_epic(project_root, epic, story)
         if norm is None or norm.id.rsplit(".", 1)[0] != epic or norm.id in seen_ids:
             continue

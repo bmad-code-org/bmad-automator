@@ -302,6 +302,7 @@ class DevLoopSmokeRunner:
 
     def _write_dev_log(self, story_id: str, dev_cmd: str) -> Path:
         path = DEV_LOOP_FOLDER / f"dev-{self._story_prefix(story_id)}-{self.run_id}.log"
+        (self.project / path).parent.mkdir(parents=True, exist_ok=True)
         payload = dict(PARSED_DEV)
         lines = [
             f"[{self._iso_now()}] dev-story {story_id}",

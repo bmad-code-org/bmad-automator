@@ -4,13 +4,15 @@
 
 Build a deterministic smoke coverage suite that verifies the Story Automator control plane before any live LLM smoke run. The suite should prove package/install determinism, helper contracts, create/dev/review/finalize lifecycle behavior, resume/validate/edit modes, marker safety, and gate wiring.
 
-## Critical Findings
+## Historical Baseline Findings
+
+These findings describe the 2026-06-02 baseline that launched this plan. See the gate map and handoff log for current implementation status.
 
 - Current deterministic smokes cover prepared `gunz`, epic/story parsing, state creation, story artifact creation, and a two-story dev status transition.
 - Current smokes do not yet cover automate, review, commit/finalize, single-epic or multi-epic retrospective behavior, wrapup, validate mode, edit mode, resume routing, monitor terminal states, parser subprocess contracts, or package version alignment.
 - `smoke:prepare` pins the `gunz` repo commit but installs `bmad-method@next`; that is a moving input unless pinned or recorded and asserted.
 - Workflow metadata already has a likely stale version surface: package/runtime surfaces report `1.15.0`, while `skills/bmad-story-automator/workflow.md` reports `1.12.0`.
-- `npm run verify` does not currently include the new deterministic external smokes.
+- At baseline, `npm run verify` did not include the new deterministic external smokes.
 - Oracle review on 2026-06-02 confirmed the plan shape is sound but release readiness must block on Phase 02 package/prep identity, Phase 03 helper JSON contracts, and Phase 05 review/finish-loop coverage. Existing smoke runners alone are not enough to call the repo smoke-ready.
 
 ## Oracle-Applied Architecture
@@ -62,7 +64,7 @@ Keep these out of deterministic `verify`:
 
 ## Assumptions
 
-- Target repo: `/Users/joon/.codex/worktrees/9b27/bmad-story-automator`.
+- Target repo: the repository checkout containing this plan packet.
 - Plan root: `docs/plans/automator-deterministic-smoke-coverage/`.
 - External target remains the prepared `.smoke/gunz` workspace unless a later phase intentionally broadens it.
 - Live LLM implementation quality is out of scope for deterministic smoke; deterministic gates verify the automator control plane and source-of-truth transitions.
@@ -87,7 +89,7 @@ Keep these out of deterministic `verify`:
 
 ## Clean Context Agent Protocol
 
-Every phase agent must read this `README.md`, its assigned phase file, only its assigned phase TODO file, [implementation-notes.md](./implementation-notes.md), and relevant earlier entries in [handoff-log.md](./handoff-log.md) before starting. Append a new handoff entry before ending.
+Every phase agent must read this `README.md`, [gate-map.md](./gate-map.md), its assigned phase file, only its assigned phase TODO file, [implementation-notes.md](./implementation-notes.md), and relevant earlier entries in [handoff-log.md](./handoff-log.md) before starting. Append a new handoff entry before ending.
 
 Do not read later phase files or later TODO files as acceptance criteria for the current phase.
 

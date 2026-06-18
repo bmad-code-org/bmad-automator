@@ -208,7 +208,9 @@ npm pack --dry-run
 ```bash
 git add package.json .claude-plugin/plugin.json .claude-plugin/marketplace.json \
   skills/module.yaml skills/bmad-story-automator/pyproject.toml \
-  skills/bmad-story-automator/src/story_automator/__init__.py
+  skills/bmad-story-automator/src/story_automator/__init__.py \
+  skills/bmad-story-automator/workflow.md \
+  <changed version docs and changelog files>
 git commit -m "chore: prepare next preview"
 ```
 
@@ -307,7 +309,9 @@ npm pack --dry-run
 ```bash
 git add package.json .claude-plugin/plugin.json .claude-plugin/marketplace.json \
   skills/module.yaml skills/bmad-story-automator/pyproject.toml \
-  skills/bmad-story-automator/src/story_automator/__init__.py
+  skills/bmad-story-automator/src/story_automator/__init__.py \
+  skills/bmad-story-automator/workflow.md \
+  <changed version docs and changelog files>
 git commit -m "chore: release v1.16.0"
 ```
 

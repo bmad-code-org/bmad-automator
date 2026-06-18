@@ -281,6 +281,24 @@ class OrchestratorEpicAgentsTests(unittest.TestCase):
         self.assertEqual(payload["stories"], ["multi-leg-3-old", "multi-leg-4-next"])
         self.assertEqual(payload["count"], 2)
 
+    def test_get_epic_stories_epic_file_accepts_bmad_numbered_headers(self) -> None:
+        path = self.project_root / "_bmad-output" / "implementation-artifacts" / "epic-1.md"
+        path.write_text(
+            textwrap.dedent(
+                """
+                ## Epic 1: Platform
+                ### 1.3: Quantity
+                ### 1.4: Next
+                """
+            ),
+            encoding="utf-8",
+        )
+        exit_code, payload = self._run_action(get_epic_stories_action, ["1"])
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["stories"], ["1.3", "1.4"])
+        self.assertEqual(payload["count"], 2)
+
     def test_get_epic_stories_epic_file_ignores_other_epic_full_key_headers(self) -> None:
         path = self.project_root / "_bmad-output" / "implementation-artifacts" / "epic-multi-leg.md"
         path.write_text(
@@ -356,6 +374,25 @@ class OrchestratorEpicAgentsTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertTrue(payload["blocking"])
         self.assertEqual(payload["dependents"], ["multi-leg-4-next"])
+        self.assertEqual(payload["source"], "epic_file")
+
+    def test_check_blocking_accepts_bmad_numbered_headers(self) -> None:
+        path = self.project_root / "_bmad-output" / "implementation-artifacts" / "epic-1.md"
+        path.write_text(
+            textwrap.dedent(
+                """
+                ## Epic 1: Platform
+                ### 1.4: Later
+                Dependencies: 1.3
+                """
+            ),
+            encoding="utf-8",
+        )
+        exit_code, payload = self._run_action(check_blocking_action, ["1.3"])
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["blocking"])
+        self.assertEqual(payload["dependents"], ["1.4"])
         self.assertEqual(payload["source"], "epic_file")
 
     def test_check_blocking_accepts_full_key_header_in_suffixed_epic_file(self) -> None:
