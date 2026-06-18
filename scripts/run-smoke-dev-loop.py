@@ -30,6 +30,7 @@ HELPER = SKILL_ROOT / "scripts/story-automator"
 RULES = SKILL_ROOT / "data/complexity-rules.json"
 STATE_TEMPLATE = SKILL_ROOT / "templates/state-document.md"
 AGENT_CONFIG = {"defaultPrimary": "codex", "defaultFallback": False}
+RUN_TIMEOUT_SECONDS = 900
 PARSED_DEV = {
     "status": "SUCCESS",
     "tests_passed": True,
@@ -413,7 +414,18 @@ class DevLoopSmokeRunner:
         return payload
 
     def _run(self, *args: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(list(args), cwd=self.project, env=self.env, text=True, capture_output=True, check=True)
+        try:
+            return subprocess.run(
+                list(args),
+                cwd=self.project,
+                env=self.env,
+                text=True,
+                capture_output=True,
+                check=True,
+                timeout=RUN_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise SmokeError(f"command timed out after {RUN_TIMEOUT_SECONDS}s: {' '.join(args)}") from exc
 
     @staticmethod
     def _story_prefix(story_id: str) -> str:

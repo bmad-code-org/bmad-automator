@@ -110,6 +110,41 @@ class CliParserContractTests(unittest.TestCase):
         self.assertEqual(payload["indices"], [1])
         self.assertEqual(payload["storyIds"], ["1.1"])
 
+    def test_parse_story_range_accepts_hyphenated_explicit_story_ids(self) -> None:
+        code, payload = self._main_json(["parse-story-range", "--input", "multi-leg-3", "--total", "2", "--ids", "multi-leg-3,multi-leg-4-next"])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["indices"], [1])
+        self.assertEqual(payload["storyIds"], ["multi-leg-3"])
+
+    def test_parse_story_ignores_bare_numeric_subheading_from_other_epic(self) -> None:
+        epic = self.root / "epic.md"
+        epic.write_text(
+            "# Product Epic\n\n"
+            "## Epic 1: Platform\n\n"
+            "### 1.1: Add database sync\n"
+            "Intro line.\n"
+            "### 2.0: Non-story subheading\n"
+            "Later detail with database.\n\n"
+            "Acceptance Criteria\n"
+            "- Works reliably\n",
+            encoding="utf-8",
+        )
+        rules = self.root / "rules.json"
+        rules.write_text(
+            json.dumps({"rules": [{"pattern": "database", "score": 3, "label": "Touches DB"}], "thresholds": {"low_max": 1, "medium_max": 3}}),
+            encoding="utf-8",
+        )
+
+        code, epic_payload = self._main_json(["parse-epic", "--file", str(epic)])
+        self.assertEqual(code, 0)
+        self.assertEqual([story["storyId"] for story in epic_payload["stories"]], ["1.1"])
+
+        code, story_payload = self._main_json(["parse-story", "--epic", str(epic), "--story", "1.1", "--rules", str(rules)])
+        self.assertEqual(code, 0)
+        self.assertIn("Later detail", story_payload["description"])
+        self.assertEqual(story_payload["acceptanceCriteria"], ["- Works reliably"])
+
     def test_parse_story_read_failure_returns_json_error(self) -> None:
         epic = self._epic_file()
         rules = self.root / "rules.json"

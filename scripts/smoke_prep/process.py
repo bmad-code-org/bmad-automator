@@ -14,12 +14,21 @@ MARKER_OVERRIDE_ENV = (
     "BMAD_STORY_AUTOMATOR_ACTIVE_MARKER",
     "STORY_AUTOMATOR_ACTIVE_MARKER",
 )
+HOST_OVERRIDE_ENV = (
+    "BMAD_SKILLS_ROOT",
+    "BMAD_RUNTIME_PROVIDER",
+    "STORY_AUTOMATOR_RUNTIME_PROVIDER",
+)
+
+
+def scrub_host_overrides(env: dict[str, str]) -> dict[str, str]:
+    for name in (*MARKER_OVERRIDE_ENV, *HOST_OVERRIDE_ENV):
+        env.pop(name, None)
+    return env
 
 
 def deterministic_smoke_env(project: Path, extra: dict[str, str] | None = None) -> dict[str, str]:
-    env = os.environ.copy()
-    for name in MARKER_OVERRIDE_ENV:
-        env.pop(name, None)
+    env = scrub_host_overrides(os.environ.copy())
     env["PROJECT_ROOT"] = str(project)
     env.update(extra or {})
     return env

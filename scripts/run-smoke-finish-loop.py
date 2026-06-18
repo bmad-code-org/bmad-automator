@@ -24,6 +24,9 @@ from story_automator.commands.tmux import cmd_tmux_wrapper  # noqa: E402
 from smoke_prep.process import deterministic_smoke_env  # noqa: E402
 
 
+RUN_TIMEOUT_SECONDS = 900
+
+
 class FinishSmokeError(Exception):
     pass
 
@@ -298,7 +301,10 @@ class FinishLoopSmokeRunner:
         return self._run(["git", *args], cwd=cwd or self.project)
 
     def _run(self, args: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(args, cwd=cwd, text=True, capture_output=True, check=True)
+        try:
+            return subprocess.run(args, cwd=cwd, text=True, capture_output=True, check=True, timeout=RUN_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired as exc:
+            raise FinishSmokeError(f"command timed out after {RUN_TIMEOUT_SECONDS}s: {' '.join(args)}") from exc
 
     def _call(self, fn, args: list[str]) -> tuple[int, str]:
         old_env = os.environ.copy()

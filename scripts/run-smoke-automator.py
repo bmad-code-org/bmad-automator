@@ -29,6 +29,7 @@ HELPER = SKILL_ROOT / "scripts/story-automator"
 RULES = SKILL_ROOT / "data/complexity-rules.json"
 STATE_TEMPLATE = SKILL_ROOT / "templates/state-document.md"
 AGENT_CONFIG = {"defaultPrimary": "codex", "defaultFallback": False}
+RUN_TIMEOUT_SECONDS = 900
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -159,6 +160,7 @@ class SmokeRunner:
             story_validation=story_validation,
             sprint_status=sprint_status,
         )
+        self._remove_marker()
         return {
             "project": str(self.project),
             "report": str(report_path),
@@ -320,6 +322,12 @@ class SmokeRunner:
         if not marker.is_file():
             raise SmokeError(f"marker was not created at active path: {marker}")
 
+    def _remove_marker(self) -> None:
+        result = self._run(str(self.helper), "orchestrator-helper", "marker", "remove")
+        marker = Path(str(self._marker_path_info()["file"]))
+        if result.returncode != 0 or marker.exists():
+            raise SmokeError(f"marker remove failed: {result.stdout}")
+
     def _marker_path_info(self) -> dict[str, Any]:
         marker_info = self._helper_json("orchestrator-helper", "marker", "path")
         if not marker_info.get("file") or not marker_info.get("entry"):
@@ -441,14 +449,18 @@ class SmokeRunner:
         return payload
 
     def _run(self, *args: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            list(args),
-            cwd=self.project,
-            env=self.env,
-            text=True,
-            capture_output=True,
-            check=True,
-        )
+        try:
+            return subprocess.run(
+                list(args),
+                cwd=self.project,
+                env=self.env,
+                text=True,
+                capture_output=True,
+                check=True,
+                timeout=RUN_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise SmokeError(f"command timed out after {RUN_TIMEOUT_SECONDS}s: {' '.join(args)}") from exc
 
     @staticmethod
     def _iso_now() -> str:

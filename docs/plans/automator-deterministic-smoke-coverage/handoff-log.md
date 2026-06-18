@@ -460,6 +460,7 @@ git diff --check
 
 - Workflow lifecycle/gate truthfulness reviewer: no actionable findings. Verified `npm run verify`, `npm run smoke:finish-loop`, and unsafe host-target failure.
 - Package/install determinism and runtime/helper boundary reviewer: no actionable findings. Verified `npm run pack:assert` and `npm run smoke:contracts`.
+- Validate/edit/resume reviewer: no actionable findings. Verified Phase 04 mode coverage through `npm run smoke:modes`, including explicit resume paths, latest incomplete discovery, validation structure issues, edit save/discard/edit-more helpers, and helper-backed post-edit route hints.
 
 ### Blockers Or Risks
 

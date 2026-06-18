@@ -1,18 +1,13 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import io
-import json
-import os
-import shutil
-import sys
-import tempfile
+import argparse, io, json, os, shutil, sys, tempfile
 from contextlib import redirect_stdout
-from datetime import datetime, timezone
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "skills" / "bmad-story-automator" / "src"))
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 from story_automator.commands.basic import (  # noqa: E402
     cmd_derive_project_slug,
@@ -26,11 +21,10 @@ from story_automator.commands.state import cmd_build_state_doc, cmd_sprint_compa
 from story_automator.core.agent_config import load_agent_config_from_state  # noqa: E402
 from story_automator.core.epic_parser import parse_story_range  # noqa: E402
 from smoke_prep.process import deterministic_smoke_env  # noqa: E402
-
+from smoke_prep.mode_report import write_mode_report  # noqa: E402
 
 class SmokeModesError(Exception):
     pass
-
 
 class ModeSmokeRunner:
     def __init__(self) -> None:
@@ -56,46 +50,10 @@ class ModeSmokeRunner:
         return {"project": str(self.project), **self.results}
 
     def write_report(self, summary: dict[str, object]) -> tuple[Path, dict[str, object]]:
-        report = REPO_ROOT / ".smoke" / "MODE_SMOKE_REPORT.json"
-        report.parent.mkdir(parents=True, exist_ok=True)
-        payload = self._report_payload(summary)
-        report.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-        return report, payload
-
-    def _report_payload(self, summary: dict[str, object]) -> dict[str, object]:
-        payload = dict(summary)
-        payload["project"] = {
-            "kind": "ephemeral",
-            "name": "mode smoke fixture",
-            "retained": False,
-        }
-        payload["createdAt"] = datetime.now(timezone.utc).isoformat()
-
-        diagnostics = self._persist_diagnostics(payload)
-        if diagnostics:
-            payload["diagnostics"] = diagnostics
-            resume = payload.get("resume")
-            if isinstance(resume, dict) and isinstance(resume.get("latestIncomplete"), str):
-                if "latestIncomplete" not in diagnostics:
-                    raise SmokeModesError(f"failed to persist latest incomplete state: {resume['latestIncomplete']}")
-                payload["resume"] = {**resume, "latestIncomplete": diagnostics["latestIncomplete"]}
-        return payload
-
-    def _persist_diagnostics(self, payload: dict[str, object]) -> dict[str, str]:
-        dest = REPO_ROOT / ".smoke" / "mode-diagnostics"
-        shutil.rmtree(dest, ignore_errors=True)
-        dest.mkdir(parents=True)
-        diagnostics: dict[str, str] = {"folder": str(dest)}
-
-        resume = payload.get("resume")
-        latest = resume.get("latestIncomplete") if isinstance(resume, dict) else None
-        if isinstance(latest, str):
-            latest_path = Path(latest)
-            if latest_path.exists():
-                latest_dest = dest / latest_path.name
-                latest_dest.write_text(latest_path.read_text(encoding="utf-8"), encoding="utf-8")
-                diagnostics["latestIncomplete"] = str(latest_dest)
-        return diagnostics
+        try:
+            return write_mode_report(REPO_ROOT, summary)
+        except ValueError as exc:
+            raise SmokeModesError(str(exc)) from exc
 
     def _install_fixture(self) -> None:
         skills = self.project / ".agents" / "skills"
@@ -370,7 +328,6 @@ class ModeSmokeRunner:
         }
 
     def _assert_edit_route_contracts(self, state_file: Path) -> None:
-        before = state_file.read_text(encoding="utf-8")
         menu = self._assert_edit_menu_contracts(state_file)
         config = load_agent_config_from_state(state_file)
         review = config.per_task.get("review")
@@ -472,7 +429,7 @@ class ModeSmokeRunner:
     def _call(self, fn, args: list[str]) -> tuple[int, str]:
         old_env = os.environ.copy()
         old_stdin = sys.stdin
-        env = deterministic_smoke_env(self.project, {"BMAD_RUNTIME_PROVIDER": "codex"})
+        env = deterministic_smoke_env(self.project)
         stdout = io.StringIO()
         try:
             os.environ.clear()
@@ -517,7 +474,12 @@ class ModeSmokeRunner:
             raise SmokeModesError(message)
 
 
-def main() -> int:
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run deterministic in-process smoke mode contracts.")
+    return parser.parse_args(argv)
+
+def main(argv: list[str] | None = None) -> int:
+    parse_args(sys.argv[1:] if argv is None else argv)
     runner = ModeSmokeRunner()
     try:
         summary = runner.run()
@@ -530,7 +492,6 @@ def main() -> int:
     print("mode smoke ok")
     print(json.dumps({"report": str(report), **payload}, indent=2))
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

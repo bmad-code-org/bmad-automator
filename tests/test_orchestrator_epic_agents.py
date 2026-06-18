@@ -395,6 +395,26 @@ class OrchestratorEpicAgentsTests(unittest.TestCase):
         self.assertEqual(payload["dependents"], ["1.4"])
         self.assertEqual(payload["source"], "epic_file")
 
+    def test_check_blocking_ignores_nonmatching_subheading_inside_explicit_epic(self) -> None:
+        path = self.project_root / "_bmad-output" / "implementation-artifacts" / "epic-1.md"
+        path.write_text(
+            textwrap.dedent(
+                """
+                ## Epic 1: Platform
+                ### 1.2: Later
+                Details before a story-like subheading.
+                ### 2.0: Non-story subheading
+                Dependencies: 1.1
+                """
+            ),
+            encoding="utf-8",
+        )
+        exit_code, payload = self._run_action(check_blocking_action, ["1.1"])
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["blocking"])
+        self.assertEqual(payload["dependents"], ["1.2"])
+
     def test_check_blocking_accepts_full_key_header_in_suffixed_epic_file(self) -> None:
         self._write_epic_file(
             """

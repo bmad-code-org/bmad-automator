@@ -32,12 +32,26 @@ def _resolve_bmad_method(env: dict[str, str] | None = None) -> dict[str, str]:
         )
     except subprocess.TimeoutExpired as exc:
         raise SmokeError(f"npm view timed out for {BMAD_METHOD_NPM_SPEC}") from exc
-    metadata = json.loads(result.stdout)
+    try:
+        metadata = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise SmokeError(
+            f"unexpected npm identity for {BMAD_METHOD_NPM_SPEC}: {result.stdout.strip()}"
+        ) from exc
+    if not isinstance(metadata, dict):
+        raise SmokeError(
+            f"unexpected npm identity for {BMAD_METHOD_NPM_SPEC}: {result.stdout.strip()}"
+        )
+    dist = metadata.get("dist", {})
+    if dist is None:
+        dist = {}
+    if not isinstance(dist, dict):
+        raise SmokeError(
+            f"unexpected npm identity for {BMAD_METHOD_NPM_SPEC}: {result.stdout.strip()}"
+        )
     version = metadata.get("version")
-    integrity = metadata.get("dist", {}).get("integrity") or metadata.get(
-        "dist.integrity"
-    )
-    if not version or not integrity:
+    integrity = dist.get("integrity") or metadata.get("dist.integrity")
+    if not isinstance(version, str) or not version or not isinstance(integrity, str) or not integrity:
         raise SmokeError(
             f"missing npm identity for {BMAD_METHOD_NPM_SPEC}: {result.stdout.strip()}"
         )

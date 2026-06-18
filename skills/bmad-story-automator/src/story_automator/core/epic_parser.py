@@ -9,6 +9,10 @@ from .common import read_text, trim_lines
 from .story_keys import normalize_story_key, normalize_story_key_for_epic
 
 
+STORY_HEADER_RE = re.compile(r"^###\s+(?:(?:Story\s+)?(\d+\.\d+)|Story\s+([^:]+)):\s*(.*)$", re.IGNORECASE)
+EPIC_HEADER_RE = re.compile(r"^##\s+Epic\s+([A-Za-z][\w-]*|\d+):\s*(.*)$", re.IGNORECASE)
+
+
 def parse_epic_file(epic_file: str | Path) -> dict[str, Any]:
     content = read_text(epic_file)
     lines = trim_lines(content)
@@ -18,18 +22,16 @@ def parse_epic_file(epic_file: str | Path) -> dict[str, Any]:
         if line.startswith("# "):
             epic_title = line.removeprefix("# ").strip()
             break
-    story_re = re.compile(r"^###\s+(?:(?:Story\s+)?(\d+\.\d+)|Story\s+([^:]+)):\s*(.*)$", re.IGNORECASE)
-    epic_re = re.compile(r"^##\s+Epic\s+([A-Za-z][\w-]*|\d+):\s*(.*)$", re.IGNORECASE)
     current_epic = ""
     current_epic_title = ""
     stories: list[dict[str, str]] = []
     for line in lines:
-        epic_match = epic_re.match(line)
+        epic_match = EPIC_HEADER_RE.match(line)
         if epic_match:
             current_epic = epic_match.group(1).strip()
             current_epic_title = epic_match.group(2).strip()
             continue
-        story_match = story_re.match(line)
+        story_match = STORY_HEADER_RE.match(line)
         if story_match:
             numeric_story, named_story, title = story_match.groups()
             raw_story = numeric_story or named_story or ""
@@ -56,19 +58,16 @@ def parse_story(epic_file: str | Path, story_id: str, rules_file: str | Path) ->
     content = read_text(epic_file)
     lines = trim_lines(content)
     project_root = _project_root_for_epic_file(epic_file)
-    epic_re = re.compile(r"^##\s+Epic\s+([A-Za-z][\w-]*|\d+):", re.IGNORECASE)
-    header_re = re.compile(r"^###\s+(?:(?:Story\s+)?(\d+\.\d+)|Story\s+([^:]+)):\s*(.*)$", re.IGNORECASE)
-    boundary_re = re.compile(r"^(?:###\s+(?:Story\s+[^:]+|\d+\.\d+):|##\s+Epic\s+(?:[A-Za-z][\w-]*|\d+):)", re.IGNORECASE)
     target_id = story_id
     start_index = -1
     title = ""
     current_epic = ""
     for index, line in enumerate(lines):
-        epic_match = epic_re.match(line)
+        epic_match = EPIC_HEADER_RE.match(line)
         if epic_match:
             current_epic = epic_match.group(1).strip()
             continue
-        match = header_re.match(line)
+        match = STORY_HEADER_RE.match(line)
         if match:
             numeric_story, named_story, raw_title = match.groups()
             raw_story = numeric_story or named_story or ""
@@ -87,9 +86,15 @@ def parse_story(epic_file: str | Path, story_id: str, rules_file: str | Path) ->
     acceptance_criteria: list[str] = []
     dependencies = ""
     in_ac = False
+    content_epic = current_epic
     for line in lines[start_index + 1 :]:
-        if boundary_re.match(line):
+        if EPIC_HEADER_RE.match(line):
             break
+        boundary_match = STORY_HEADER_RE.match(line)
+        if boundary_match:
+            raw_story = (boundary_match.group(1) or boundary_match.group(2) or "").strip()
+            if _normalize_header_story(project_root, content_epic, raw_story) is not None:
+                break
         if "Acceptance Criteria" in line:
             in_ac = True
             continue
@@ -160,11 +165,14 @@ def _project_root_for_epic_file(epic_file: str | Path) -> str:
 
 
 def _normalize_header_story(project_root: str, current_epic: str, raw_story: str):
-    if current_epic:
-        story_key = normalize_story_key_for_epic(project_root, current_epic, raw_story)
-        if story_key is not None:
-            return story_key
-    return normalize_story_key(project_root, raw_story)
+    if not current_epic:
+        return normalize_story_key(project_root, raw_story)
+    story_key = normalize_story_key_for_epic(project_root, current_epic, raw_story)
+    if story_key is None:
+        return None
+    if story_key.id.rsplit(".", 1)[0] != current_epic:
+        return None
+    return story_key
 
 
 def parse_story_range(user_input: str, total: int, ids_csv: str = "") -> dict[str, Any]:
@@ -180,7 +188,9 @@ def parse_story_range(user_input: str, total: int, ids_csv: str = "") -> dict[st
         for part in normalized.split(","):
             if not part:
                 continue
-            if "-" in part:
+            if part in id_index:
+                selected.add(id_index[part])
+            elif "-" in part:
                 start_raw, end_raw = part.split("-", 1)
                 if start_raw.isdigit() and end_raw.isdigit():
                     start = int(start_raw)
@@ -194,8 +204,6 @@ def parse_story_range(user_input: str, total: int, ids_csv: str = "") -> dict[st
                     selected.update(range(low, high + 1))
             elif part.isdigit():
                 selected.add(int(part))
-            elif part in id_index:
-                selected.add(id_index[part])
     indices = sorted(index for index in selected if 1 <= index <= total)
     story_ids = [ids[index - 1] for index in indices if index - 1 < len(ids)]
     return {"ok": True, "indices": indices, "storyIds": story_ids, "count": len(indices)}

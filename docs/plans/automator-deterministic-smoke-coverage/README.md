@@ -22,7 +22,7 @@ Use a layered deterministic control-plane suite instead of one giant automator s
 1. Fast in-repo contract gates: fake subprocesses, runner mode, temp fixtures, helper JSON assertions, state/policy/success-verifier matrices.
 2. Package/install identity gates: `npm pack --dry-run --json`, tarball identity, selected installed-file checksums, version surface alignment, and forbidden generated files.
 3. Local no-network mode fixtures: resume, validate, edit, create startup, marker lifecycle, and source-of-truth mismatch checks using temp BMAD-style projects.
-4. Explicit prepared-repo smokes: `smoke:prepare`, `smoke:run`, `smoke:dev-loop`, `smoke:finish-loop`, and `smoke:deterministic-full` against `.smoke/gunz`.
+4. Explicit release smokes: `smoke:prepare`, `smoke:run`, and `smoke:dev-loop` against prepared `.smoke/gunz`; `smoke:finish-loop` against a temp git-backed smoke repo for host commit isolation; `smoke:deterministic-full` runs both sets.
 
 Default `npm run verify` should eventually run only fast deterministic gates. Prepared-repo reset/network gates remain explicit unless CI provides stable cache and time budget.
 

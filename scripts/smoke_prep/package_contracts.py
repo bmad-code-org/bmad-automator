@@ -109,7 +109,7 @@ DEPENDENCY_SKILLS = ["bmad-create-story", "bmad-dev-story", "bmad-retrospective"
 
 
 def assert_package_contract(root: Path, env: dict[str, str] | None = None) -> dict:
-    package = json.loads((root / "package.json").read_text(encoding="utf-8"))
+    package = _load_package_json(root)
     dry_run = _npm_pack_json(root, ["--dry-run", "--json"], env)
     _assert_pack_metadata(dry_run, package)
     _assert_content(dry_run)
@@ -125,7 +125,7 @@ def pack_project(root: Path, pack_dir: Path, env: dict[str, str] | None) -> dict
     for tarball in pack_dir.glob("*.tgz"):
         tarball.unlink()
 
-    package = json.loads((root / "package.json").read_text(encoding="utf-8"))
+    package = _load_package_json(root)
     packed = _npm_pack_json(root, ["--json", "--pack-destination", str(pack_dir)], env)
     _assert_pack_metadata(packed, package)
     _assert_content(packed)
@@ -133,6 +133,17 @@ def pack_project(root: Path, pack_dir: Path, env: dict[str, str] | None) -> dict
     if not tarball.is_file():
         raise SmokeError(f"missing packed tarball: {tarball}")
     return _identity_from_pack(root, packed, tarball)
+
+
+def _load_package_json(root: Path) -> dict:
+    path = root / "package.json"
+    try:
+        package = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise SmokeError(f"invalid package.json: {path}: {exc}") from exc
+    if not isinstance(package, dict):
+        raise SmokeError(f"unexpected package.json shape: {package!r}")
+    return package
 
 
 def write_package_identity(workspace: Path, identity: dict) -> Path:
@@ -224,6 +235,13 @@ def _npm_pack_json(root: Path, args: list[str], env: dict[str, str] | None) -> d
 
 
 def _assert_pack_metadata(metadata: dict, package: dict) -> None:
+    if not isinstance(metadata, dict):
+        raise SmokeError(f"unexpected npm pack entry shape: {metadata!r}")
+    if not isinstance(package, dict):
+        raise SmokeError(f"unexpected package.json shape: {package!r}")
+    missing_package = [key for key in ("name", "version") if not package.get(key)]
+    if missing_package:
+        raise SmokeError("package identity failed:\nmissing package fields: " + ", ".join(missing_package))
     expected_filename = f"{package['name']}-{package['version']}.tgz"
     failures = []
     for key in ("name", "version"):
@@ -238,9 +256,19 @@ def _assert_pack_metadata(metadata: dict, package: dict) -> None:
 
 
 def _assert_content(metadata: dict) -> None:
-    entries = {entry["path"]: entry for entry in metadata["files"]}
-    missing = sorted(set(REQUIRED_PACKAGE_FILES) - set(entries))
+    if not isinstance(metadata, dict):
+        raise SmokeError(f"unexpected npm pack entry shape: {metadata!r}")
+    files = metadata.get("files")
+    if not isinstance(files, list):
+        raise SmokeError("package content failed:\nmissing files list")
+    entries: dict[str, dict] = {}
     failures = []
+    for entry in files:
+        if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
+            failures.append(f"malformed file entry: {entry!r}")
+            continue
+        entries[entry["path"]] = entry
+    missing = sorted(set(REQUIRED_PACKAGE_FILES) - set(entries))
     if missing:
         failures.append("missing required files:\n" + "\n".join(missing))
     for path in EXECUTABLE_PACKAGE_FILES:

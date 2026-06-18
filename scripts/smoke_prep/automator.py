@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 from .package_contracts import pack_project
-from .process import SmokeError, run, step
+from .process import SmokeError, run, scrub_host_overrides, step
 
 
 def install_bmad(gunz_dir: Path, env: dict[str, str], bmad_method_spec: str) -> None:
@@ -83,7 +83,7 @@ def verify_layout(gunz_dir: Path) -> None:
 
 
 def smoke_env(workspace: Path) -> dict[str, str]:
-    env = os.environ.copy()
+    env = scrub_host_overrides(os.environ.copy())
     home = workspace / "home"
     npm_cache = workspace / "npm-cache"
     home.mkdir(parents=True, exist_ok=True)

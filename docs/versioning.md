@@ -201,6 +201,7 @@ v1.16.0-next.0
 ```bash
 npm run verify
 npm pack --dry-run
+npm run smoke:deterministic-full
 ```
 
 4. Commit the preview.
@@ -302,6 +303,7 @@ Update every file listed in [Files To Bump](#files-to-bump).
 ```bash
 npm run verify
 npm pack --dry-run
+npm run smoke:deterministic-full
 ```
 
 5. Commit the stable bump if it was not already part of the merge.
@@ -451,6 +453,7 @@ For each preview or stable release, record:
 - changed version files
 - `npm run verify` result
 - `npm pack --dry-run` result
+- `npm run smoke:deterministic-full` result for release candidates
 - install smoke commands and manifest excerpts
 - npm publish status, including skipped publishes
 - rollback note and known installer caveats

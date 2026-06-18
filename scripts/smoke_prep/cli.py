@@ -77,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
         verify_layout(gunz_dir)
         if not args.skip_automator_install:
             verify_installed_package(gunz_dir, package_identity, workspace)
-        next_steps = write_next_steps(workspace, gunz_dir)
+        next_steps = write_next_steps(workspace, gunz_dir, automator_installed=not args.skip_automator_install)
 
     except (OSError, subprocess.CalledProcessError, SmokeError, ValueError, json.JSONDecodeError) as exc:
         print(f"smoke prep failed: {exc}", file=sys.stderr)

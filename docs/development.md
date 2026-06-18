@@ -14,8 +14,16 @@ PYTHONPATH=skills/bmad-story-automator/src python3 -m story_automator --help
 `npm run verify` expands to:
 
 - `npm run test:python`
-- `npm run pack:dry-run`
+- `npm run version:check`
+- `npm run pack:assert`
+- `npm run test:cli`
+- `npm run smoke:contracts`
+- `npm run smoke:modes`
 - `npm run test:smoke`
+
+Run `npm run smoke:deterministic-full` separately before release when prepared
+repo reset, install identity, create, dev-loop, and finish-loop coverage is
+needed.
 
 ## Smoke Test Coverage
 
@@ -49,9 +57,10 @@ Claude Code entrypoint for the semi-automated smoke run.
 ```mermaid
 flowchart TD
     A["Edit installer, skills, or runtime"] --> B["Run npm run test:python"]
-    B --> C["Run npm run pack:dry-run"]
-    C --> D["Run npm run test:smoke"]
+    B --> C["Run npm run pack:assert"]
+    C --> D["Run npm run smoke:contracts + smoke:modes"]
     D --> E["Run npm run verify"]
+    E --> F["Run npm run smoke:deterministic-full before release"]
 ```
 
 ## Packaging Surface
@@ -111,10 +120,11 @@ Publish steps:
 Recommended release checklist:
 
 1. `npm run verify`
-2. use `secrets` skill for npm auth material; search exact key names, then `secrets load <KEY>` into the publish shell; never print token values
-3. inspect the package dry-run output
-4. confirm README and docs match shipped behavior
-5. publish
+2. `npm run smoke:deterministic-full`
+3. use `secrets` skill for npm auth material; search exact key names, then `secrets load <KEY>` into the publish shell; never print token values
+4. inspect the package dry-run output
+5. confirm README and docs match shipped behavior
+6. publish
 
 For BMAD Method stable tags, preview tags, registry `next`, and npm dist-tags,
 use [Versioning And Release Channels](./versioning.md).

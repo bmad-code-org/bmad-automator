@@ -8,13 +8,11 @@ from story_automator.core.artifact_paths import implementation_artifacts_dir
 from story_automator.core.agent_config import AgentConfigResolved, load_agent_config_from_state, parse_agent_config_json, resolve_agent_for_task
 from story_automator.core.agent_plan import AgentPlanInputError, agent_plan_error, build_agents_file, load_agents_plan_for_resolution, load_complexity_payload, resolve_agents_payload
 from story_automator.core.diagnostics import issues_from_exception
+from story_automator.core.epic_parser import EPIC_HEADER_RE, STORY_HEADER_RE
 from story_automator.core.frontmatter import find_frontmatter_value, parse_frontmatter
 from story_automator.core.sprint import sprint_status_epic
 from story_automator.core.story_keys import StoryKey, normalize_story_key, normalize_story_key_for_epic
 from story_automator.core.utils import file_exists, get_project_root, print_json, read_text, trim_lines
-
-STORY_HEADER_RE = re.compile(r"^###\s+(?:(?:Story\s+)?(\d+\.\d+)|Story\s+([^:]+)):", re.IGNORECASE)
-
 
 def check_epic_complete_action(args: list[str]) -> int:
     try:
@@ -107,11 +105,20 @@ def check_blocking_action(args: list[str]) -> int:
             return 0
         dependents: list[str] = []
         current_story = ""
+        current_epic = ""
         for line in trim_lines(read_text(epic_file)):
+            epic_match = EPIC_HEADER_RE.match(line)
+            if epic_match:
+                current_epic = epic_match.group(1).strip()
+                current_story = ""
+                continue
             match = STORY_HEADER_RE.match(line)
             if match:
                 candidate_story = (match.group(1) or match.group(2) or "").strip()
-                current_story = candidate_story if _story_matches_epic(project_root, epic, candidate_story) else ""
+                if _story_matches_epic(project_root, epic, candidate_story):
+                    current_story = candidate_story
+                elif not current_epic or current_epic != epic:
+                    current_story = ""
                 continue
             if current_story and re.search(r"(?i)Dependencies:|\*\*Dependencies\*\*:", line):
                 if _line_references_story(project_root, epic, norm, args[0], line):
