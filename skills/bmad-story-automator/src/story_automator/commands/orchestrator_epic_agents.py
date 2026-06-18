@@ -98,7 +98,7 @@ def check_blocking_action(args: list[str]) -> int:
         if norm is None:
             print_json({"ok": False, "error": "could_not_normalize_key", "input": args[0]})
             return 1
-        epic = norm.id.split(".", 1)[0]
+        epic = norm.id.rsplit(".", 1)[0]
         epic_file = find_epic_file(epic)
         if not epic_file:
             print_json({"ok": True, "blocking": True, "story": norm.id, "epic": epic, "dependents": [], "reason": "epic_file_not_found", "source": "unknown"})
@@ -310,7 +310,7 @@ def _story_key_rank(story: str, norm: StoryKey | None) -> int:
 
 def _line_references_story(project_root: str, epic: str, target: StoryKey, requested_story: str, line: str) -> bool:
     requested_full_key = _is_explicit_full_key(requested_story, target)
-    for match in re.finditer(r"\b(?:\d+\.\d+|\d+-\d+(?:-[\w]+)*|[A-Za-z][\w-]*(?:\.\d+|-\d+(?:-[\w]+)*))\b", line):
+    for match in re.finditer(r"\b(?:\d+(?:\.\d+)+|\d+-\d+(?:-[\w]+)*|[A-Za-z][\w-]*(?:\.\d+|-\d+(?:-[\w]+)*))\b", line):
         token = match.group(0)
         norm = normalize_story_key_for_epic(project_root, epic, token)
         if norm is not None and norm.id == target.id:

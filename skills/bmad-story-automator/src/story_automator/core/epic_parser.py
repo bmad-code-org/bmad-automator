@@ -9,8 +9,8 @@ from .common import read_text, trim_lines
 from .story_keys import normalize_story_key, normalize_story_key_for_epic
 
 
-STORY_HEADER_RE = re.compile(r"^###\s+(?:(?:Story\s+)?(\d+\.\d+)|Story\s+([^:]+)):\s*(.*)$", re.IGNORECASE)
-EPIC_HEADER_RE = re.compile(r"^##\s+Epic\s+([A-Za-z][\w-]*|\d+):\s*(.*)$", re.IGNORECASE)
+STORY_HEADER_RE = re.compile(r"^###\s+(?:(?:Story\s+)?(\d+(?:\.\d+)+)|Story\s+([^:]+)):\s*(.*)$", re.IGNORECASE)
+EPIC_HEADER_RE = re.compile(r"^##\s+Epic\s+([A-Za-z][\w-]*|\d+(?:\.\d+)*):\s*(.*)$", re.IGNORECASE)
 
 
 def parse_epic_file(epic_file: str | Path) -> dict[str, Any]:
@@ -74,7 +74,11 @@ def parse_story(epic_file: str | Path, story_id: str, rules_file: str | Path) ->
             story_key = _normalize_header_story(project_root, current_epic, raw_story.strip())
             if story_key is None:
                 continue
-            if target_id not in {raw_story.strip(), story_key.id, story_key.prefix, story_key.key}:
+            target_aliases = {raw_story.strip(), story_key.id, story_key.prefix, story_key.key}
+            title_slug = _slugify_title(raw_title)
+            if title_slug and not _is_explicit_header_story(raw_story.strip(), story_key.id):
+                target_aliases.add(f"{story_key.prefix}-{title_slug}")
+            if target_id not in target_aliases:
                 continue
             start_index = index
             target_id = story_key.id
@@ -170,7 +174,7 @@ def _normalize_header_story(project_root: str, current_epic: str, raw_story: str
     story_key = normalize_story_key_for_epic(project_root, current_epic, raw_story)
     if story_key is None:
         return None
-    if story_key.id.rsplit(".", 1)[0] != current_epic:
+    if story_key.id != current_epic and not story_key.id.startswith(f"{current_epic}."):
         return None
     return story_key
 
@@ -202,6 +206,8 @@ def parse_story_range(user_input: str, total: int, ids_csv: str = "") -> dict[st
                     end = id_index[end_raw]
                     low, high = sorted((start, end))
                     selected.update(range(low, high + 1))
+                else:
+                    raise ValueError(f"invalid_story_range:{part}")
             elif part.isdigit():
                 selected.add(int(part))
     indices = sorted(index for index in selected if 1 <= index <= total)
@@ -238,8 +244,7 @@ def _story_aliases(story: dict[str, str]) -> set[str]:
     if story_key:
         aliases.add(story_key)
     if not _is_explicit_header_story(header_story, story_id):
-        epic, _, story_num = story_id.rpartition(".")
-        prefix = f"{epic}-{story_num}"
+        prefix = story_id.replace(".", "-")
         aliases.add(prefix)
         title_slug = _slugify_title(story.get("title", ""))
         if title_slug:
@@ -250,16 +255,15 @@ def _story_aliases(story: dict[str, str]) -> set[str]:
 def _is_explicit_header_story(header_story: str, story_id: str) -> bool:
     if not header_story:
         return False
-    epic, _, story_num = story_id.rpartition(".")
-    return header_story not in {story_id, f"{epic}-{story_num}"}
+    return header_story not in {story_id, story_id.replace(".", "-")}
 
 
 def _slugify_title(title: str) -> str:
     return "-".join(part for part in re.split(r"[^A-Za-z0-9]+", title.lower()) if part)
 
 
-def _story_sort_key(value: str) -> tuple[int, int, str, int, str]:
+def _story_sort_key(value: str) -> tuple[int, tuple[int, ...], str, int, str]:
     epic, _, story_num = value.rpartition(".")
-    if epic.isdigit():
-        return (0, int(epic), "", int(story_num) if story_num.isdigit() else 0, value)
-    return (1, 0, epic, int(story_num) if story_num.isdigit() else 0, value)
+    if all(part.isdigit() for part in value.split(".")):
+        return (0, tuple(int(part) for part in value.split(".")), "", 0, value)
+    return (1, (), epic, int(story_num) if story_num.isdigit() else 0, value)

@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from story_automator.core.epic_parser import epic_complete, parse_epic_file, parse_story
+from story_automator.core.epic_parser import epic_complete, parse_epic_file, parse_story, parse_story_range
 
 
 class EpicParserTests(unittest.TestCase):
@@ -77,6 +77,19 @@ Acceptance Criteria
         self.assertEqual(payload["storyId"], "multi-leg.3")
         self.assertEqual(payload["title"], "Old")
 
+    def test_parse_story_rejects_missing_explicit_full_key_sibling(self) -> None:
+        self.epic_file.write_text(
+            """# Epic Numeric
+## Epic 1.2: Nested Epic
+### Story 1-2-3-old: New
+Acceptance Criteria
+- Works
+""",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ValueError, "story_not_found"):
+            parse_story(self.epic_file, "1-2-3-new", self.rules_file)
+
     def test_epic_complete_accepts_non_numeric_story_ids(self) -> None:
         self.epic_file.write_text(
             """# Epic Multi Leg
@@ -143,6 +156,87 @@ Acceptance Criteria
         self.assertTrue(payload["ok"])
         self.assertFalse(payload["epicComplete"])
         self.assertEqual(payload["maxEpicStory"], "10.1")
+
+    def test_parse_epic_file_accepts_three_level_numeric_story_ids(self) -> None:
+        self.epic_file.write_text(
+            """# Epic Numeric
+### 1.1.1: Nested
+""",
+            encoding="utf-8",
+        )
+        payload = parse_epic_file(self.epic_file)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["stories"][0]["storyId"], "1.1.1")
+        self.assertEqual(payload["stories"][0]["epicNum"], "1.1")
+        self.assertEqual(payload["stories"][0]["storyNum"], "1")
+
+    def test_parse_epic_file_accepts_nested_numeric_story_under_numeric_epic(self) -> None:
+        self.epic_file.write_text(
+            """# Epic Numeric
+## Epic 1.1: Nested Epic
+### 1.1.1: Nested
+""",
+            encoding="utf-8",
+        )
+        payload = parse_epic_file(self.epic_file)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["stories"][0]["storyId"], "1.1.1")
+        self.assertEqual(payload["stories"][0]["epicTitle"], "Nested Epic")
+
+    def test_epic_complete_sorts_nested_numeric_story_ids_numerically(self) -> None:
+        self.epic_file.write_text(
+            """# Epic Numeric
+### 1.9.1: Old
+### 1.10.1: New
+""",
+            encoding="utf-8",
+        )
+        payload = epic_complete(self.epic_file, "1.9.1")
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["epicComplete"])
+        self.assertEqual(payload["maxEpicStory"], "1.10.1")
+
+    def test_nested_numeric_story_accepts_canonical_dashed_full_key_alias(self) -> None:
+        self.epic_file.write_text(
+            """# Epic Numeric
+## Epic 1.2: Nested Epic
+### 1.2.3: Nested
+Acceptance Criteria
+- Works
+""",
+            encoding="utf-8",
+        )
+        story = parse_story(self.epic_file, "1-2-3-nested", self.rules_file)
+        self.assertEqual(story["storyId"], "1.2.3")
+        complete = epic_complete(self.epic_file, "1-2-3-nested")
+        self.assertTrue(complete["ok"])
+        self.assertTrue(complete["epicComplete"])
+
+    def test_nested_numeric_story_accepts_multi_digit_dashed_full_key_under_epic(self) -> None:
+        self.epic_file.write_text(
+            """# Epic Numeric
+## Epic 1.2: Nested Epic
+### Story 1-2-21-nested: Nested
+""",
+            encoding="utf-8",
+        )
+        payload = parse_epic_file(self.epic_file)
+        self.assertEqual(payload["stories"][0]["storyId"], "1.2.21")
+
+    def test_nested_numeric_epic_preserves_title_like_numeric_segments(self) -> None:
+        self.epic_file.write_text(
+            """# Epic Numeric
+## Epic 1.2: Nested Epic
+### Story 1-2-2026-release: Release
+""",
+            encoding="utf-8",
+        )
+        payload = parse_epic_file(self.epic_file)
+        self.assertEqual(payload["stories"][0]["storyId"], "1.2")
+
+    def test_parse_story_range_rejects_unknown_hyphenated_story_id(self) -> None:
+        with self.assertRaisesRegex(ValueError, "invalid_story_range:multi-leg-3x"):
+            parse_story_range("multi-leg-3x", 2, "multi-leg-3,multi-leg-4")
 
 
 if __name__ == "__main__":

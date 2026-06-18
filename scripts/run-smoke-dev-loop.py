@@ -86,6 +86,10 @@ class DevLoopSmokeRunner:
         self.env = deterministic_smoke_env(project)
         self.helper = project / HELPER
 
+    def close(self) -> None:
+        return None
+
+
     def run(self, *, reset_artifacts: bool) -> dict[str, Any]:
         self._assert_prepared()
         if reset_artifacts:

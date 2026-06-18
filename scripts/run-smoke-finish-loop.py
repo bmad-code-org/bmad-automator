@@ -214,11 +214,19 @@ class FinishLoopSmokeRunner:
         state_dest.write_text(state.read_text(encoding="utf-8"), encoding="utf-8")
         log = self._git("log", "--oneline", "-5", cwd=commit_repo).stdout
         (dest / "git-log.txt").write_text(log, encoding="utf-8")
+        learnings = self.output / "learnings.md"
+        persisted_learnings = None
+        if learnings.exists():
+            persisted_learnings = dest / learnings.name
+            persisted_learnings.write_text(learnings.read_text(encoding="utf-8"), encoding="utf-8")
+            if "wrapup" in self.results:
+                self.results["wrapup"]["learnings"] = str(persisted_learnings)
         return {
             "folder": str(dest),
             "stateFile": str(state_dest),
             "gitLog": str(dest / "git-log.txt"),
             "gitLogRepo": self._repo_descriptor(commit_repo),
+            **({"learnings": str(persisted_learnings)} if persisted_learnings else {}),
         }
 
     def _ephemeral_project_descriptor(self) -> dict[str, object]:
@@ -322,7 +330,13 @@ class FinishLoopSmokeRunner:
 
     def _json(self, code: int, raw: str) -> dict[str, object]:
         self._expect(code in {0, 1}, f"unexpected exit {code}: {raw}")
-        return json.loads(raw)
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise FinishSmokeError(f"helper returned invalid JSON: {raw}") from exc
+        if not isinstance(payload, dict):
+            raise FinishSmokeError(f"helper returned non-object JSON: {raw}")
+        return payload
 
     def _expect(self, condition: bool, message: str) -> None:
         if not condition:

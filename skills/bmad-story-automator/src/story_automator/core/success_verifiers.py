@@ -289,7 +289,7 @@ def _epic_identifier(project_root: str, story_key: str) -> str:
         return story_key
     norm = normalize_story_key(project_root, story_key)
     if norm is not None:
-        return norm.id.split(".", 1)[0]
+        return norm.id.rsplit(".", 1)[0]
     if re.fullmatch(r"[A-Za-z][\w-]*", story_key) and sprint_status_epic(project_root, story_key)[0]:
         return story_key
     return ""

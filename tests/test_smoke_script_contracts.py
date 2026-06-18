@@ -467,16 +467,18 @@ class SmokeStorySlugTests(unittest.TestCase):
             project=REPO_ROOT / ".smoke" / "gunz",
             story_id="1.1",
         )
-
-        with patch.object(
-            runner,
-            "_helper_json",
-            side_effect=[
-                {"found": False, "story": "1.1", "status": "not_found"},
-                {"title": "First Story"},
-            ],
-        ):
-            slug = runner._story_slug()
+        try:
+            with patch.object(
+                runner,
+                "_helper_json",
+                side_effect=[
+                    {"found": False, "story": "1.1", "status": "not_found"},
+                    {"title": "First Story"},
+                ],
+            ):
+                slug = runner._story_slug()
+        finally:
+            runner.close()
 
         self.assertEqual(slug, "1-1-first-story")
 
@@ -488,16 +490,18 @@ class SmokeStorySlugTests(unittest.TestCase):
             project=REPO_ROOT / ".smoke" / "gunz",
             story_ids=["1.1"],
         )
-
-        with patch.object(
-            runner,
-            "_helper_json",
-            side_effect=[
-                {"found": False, "story": "1.1", "status": "not_found"},
-                {"title": "First Story"},
-            ],
-        ):
-            slug = runner._story_slug("1.1")
+        try:
+            with patch.object(
+                runner,
+                "_helper_json",
+                side_effect=[
+                    {"found": False, "story": "1.1", "status": "not_found"},
+                    {"title": "First Story"},
+                ],
+            ):
+                slug = runner._story_slug("1.1")
+        finally:
+            runner.close()
 
         self.assertEqual(slug, "1-1-first-story")
 
@@ -529,6 +533,10 @@ class FinishLoopSmokeScriptTests(unittest.TestCase):
             runner._init_git()
             state = runner.project / "orchestration-smoke.md"
             state.write_text('status: "COMPLETE"\n', encoding="utf-8")
+            learnings = runner.output / "learnings.md"
+            learnings.parent.mkdir(parents=True)
+            learnings.write_text("## Learnings\n", encoding="utf-8")
+            runner.results["wrapup"] = {"learnings": str(learnings.relative_to(runner.project))}
             payload = runner._write_report(state, [{"story": "1.1", "commit": "abc123"}], runner.project)
             report = Path(payload["report"])
             temp_root = runner.tmp.name
@@ -539,7 +547,18 @@ class FinishLoopSmokeScriptTests(unittest.TestCase):
         self.assertEqual(persisted, payload)
         self.assertTrue(Path(payload["diagnostics"]["stateFile"]).exists())
         self.assertTrue(Path(payload["diagnostics"]["gitLog"]).exists())
+        self.assertTrue(Path(payload["diagnostics"]["learnings"]).exists())
+        self.assertEqual(payload["wrapup"]["learnings"], payload["diagnostics"]["learnings"])
         self.assert_no_temp_path(payload, temp_root)
+
+    def test_json_rejects_non_object_payload(self) -> None:
+        module = load_script_module("run_smoke_finish_loop", SCRIPTS / "run-smoke-finish-loop.py")
+        runner = module.FinishLoopSmokeRunner()
+        try:
+            with self.assertRaisesRegex(module.FinishSmokeError, "helper returned non-object JSON"):
+                runner._json(0, "[]")
+        finally:
+            runner.close()
 
     def assert_no_temp_path(self, value: object, temp_root: str) -> None:
         if isinstance(value, dict):

@@ -20,17 +20,17 @@ def sprint_status_file(project_root: str) -> str:
 
 
 def normalize_story_key(project_root: str, value: str) -> StoryKey | None:
-    if re.fullmatch(r"\d+\.\d+", value):
+    if re.fullmatch(r"\d+(?:\.\d+)+", value):
         story_id = value
         prefix = value.replace(".", "-")
         key = ""
-    elif re.fullmatch(r"\d+-\d+", value):
+    elif re.fullmatch(r"\d+(?:-\d+)+", value):
         prefix = value
         story_id = value.replace("-", ".")
         key = ""
-    elif re.fullmatch(r"\d+-\d+-.+", value):
+    elif re.fullmatch(r"\d+(?:-\d+)+-.+", value):
         key = value
-        prefix = "-".join(value.split("-", 2)[:2])
+        prefix = _numeric_full_key_prefix(value)
         story_id = prefix.replace("-", ".")
     elif re.fullmatch(r"[A-Za-z][\w-]*\.\d+", value):
         story_id = value
@@ -62,6 +62,11 @@ def normalize_story_key_for_epic(project_root: str, epic: str, value: str) -> St
         if norm is None or norm.id.rsplit(".", 1)[0] != epic:
             return None
         return norm
+
+    nested_numeric = _nested_numeric_story_for_epic(epic, value)
+    if nested_numeric is not None:
+        story_id, prefix, key = nested_numeric
+        return _complete_story_key(project_root, story_id, prefix, key)
 
     dotted = re.fullmatch(rf"{re.escape(epic)}\.(\d+)", value)
     if dotted:
@@ -137,6 +142,36 @@ def _status_keys(content: str) -> list[str]:
             continue
         keys.append(stripped.split(":", 1)[0].strip())
     return keys
+
+
+def _numeric_full_key_prefix(value: str) -> str:
+    parts = value.split("-")
+    if len(parts) >= 4 and all(part.isdigit() for part in parts[:3]):
+        nested_prefix = "-".join(parts[:3])
+        if not _numeric_title_segment(parts):
+            return nested_prefix
+    return "-".join(parts[:2])
+
+
+def _nested_numeric_story_for_epic(epic: str, value: str) -> tuple[str, str, str] | None:
+    if not all(part.isdigit() for part in epic.split(".")):
+        return None
+    epic_prefix = epic.replace(".", "-")
+    match = re.fullmatch(rf"{re.escape(epic_prefix)}-(\d+)(?:-.+)?", value)
+    if not match:
+        return None
+    parts = value.split("-")
+    if len(parts) >= 4 and _numeric_title_segment(parts):
+        return None
+    prefix = f"{epic_prefix}-{match.group(1)}"
+    key = value if value != prefix else ""
+    return f"{epic}.{match.group(1)}", prefix, key
+
+
+def _numeric_title_segment(parts: list[str]) -> bool:
+    if len(parts[2]) == 4:
+        return True
+    return len(parts[2]) == 2 and len(parts) >= 4 and parts[3] in {"release"}
 
 
 def _full_key_matches_story(project_root: str, key: str, story_id: str, *, allow_ambiguous_same_id: bool) -> bool:

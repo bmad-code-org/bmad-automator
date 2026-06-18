@@ -179,6 +179,25 @@ class OrchestratorEpicAgentsTests(unittest.TestCase):
         self.assertFalse(payload["blocking"])
         self.assertEqual(payload["dependents"], [])
 
+    def test_check_blocking_accepts_nested_numeric_story_dependencies(self) -> None:
+        path = self.project_root / "_bmad-output" / "implementation-artifacts" / "epic-1.2.md"
+        path.write_text(
+            textwrap.dedent(
+                """
+                ## Epic 1.2: Nested
+                ### 1.2.4: Later
+                Dependencies: 1.2.3
+                """
+            ),
+            encoding="utf-8",
+        )
+        exit_code, payload = self._run_action(check_blocking_action, ["1.2.3"])
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["blocking"])
+        self.assertEqual(payload["epic"], "1.2")
+        self.assertEqual(payload["dependents"], ["1.2.4"])
+
     def test_get_epic_stories_state_file_accepts_non_numeric_full_keys(self) -> None:
         state_file = self._write_state(
             """

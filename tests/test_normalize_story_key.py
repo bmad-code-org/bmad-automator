@@ -44,6 +44,52 @@ class NormalizeStoryKeyTests(unittest.TestCase):
         self.assertEqual(result.prefix, "1-2")
         self.assertEqual(result.key, "1-2-user-authentication")
 
+    def test_numeric_full_key_with_numeric_title_segment(self) -> None:
+        result = normalize_story_key(str(self.project_root), "1-2-2026-release")
+        assert result is not None
+        self.assertEqual(result.id, "1.2")
+        self.assertEqual(result.prefix, "1-2")
+        self.assertEqual(result.key, "1-2-2026-release")
+
+    def test_numeric_full_key_with_two_digit_numeric_title_segment(self) -> None:
+        result = normalize_story_key(str(self.project_root), "1-2-42-release")
+        assert result is not None
+        self.assertEqual(result.id, "1.2")
+        self.assertEqual(result.prefix, "1-2")
+        self.assertEqual(result.key, "1-2-42-release")
+
+    def test_nested_numeric_full_key(self) -> None:
+        result = normalize_story_key(str(self.project_root), "1-2-3-nested")
+        assert result is not None
+        self.assertEqual(result.id, "1.2.3")
+        self.assertEqual(result.prefix, "1-2-3")
+        self.assertEqual(result.key, "1-2-3-nested")
+
+    def test_nested_numeric_full_key_with_multi_digit_story_number(self) -> None:
+        result = normalize_story_key(str(self.project_root), "1-2-10-nested")
+        assert result is not None
+        self.assertEqual(result.id, "1.2.10")
+        self.assertEqual(result.prefix, "1-2-10")
+        self.assertEqual(result.key, "1-2-10-nested")
+
+    def test_nested_numeric_full_key_above_twenty(self) -> None:
+        result = normalize_story_key(str(self.project_root), "1-2-21-nested")
+        assert result is not None
+        self.assertEqual(result.id, "1.2.21")
+        self.assertEqual(result.prefix, "1-2-21")
+        self.assertEqual(result.key, "1-2-21-nested")
+
+    def test_epic_hint_preserves_numeric_title_segments(self) -> None:
+        year = normalize_story_key_for_epic(str(self.project_root), "1.2", "1-2-2026-release")
+        assert year is not None
+        self.assertEqual(year.id, "1.2")
+        self.assertEqual(year.prefix, "1-2")
+
+        release = normalize_story_key_for_epic(str(self.project_root), "1.2", "1-2-42-release")
+        assert release is not None
+        self.assertEqual(release.id, "1.2")
+        self.assertEqual(release.prefix, "1-2")
+
     # --- Non-numeric epic keys (the regression this patch restores) ---
 
     def test_non_numeric_dotted_id(self) -> None:
