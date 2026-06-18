@@ -174,6 +174,86 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertNotIn("abc 123", redacted)
         self.assertNotIn("xyz", redacted)
 
+    def test_redact_actual_masks_json_like_quoted_secret_keys(self) -> None:
+        redacted = redact_actual('{"api_key":"secret-value","safe":"visible"}')
+
+        self.assertIn('"api_key":"<redacted>"', redacted)
+        self.assertIn('"safe":"visible"', redacted)
+        self.assertNotIn("secret-value", redacted)
+
+    def test_redact_actual_masks_json_like_secret_collections(self) -> None:
+        array_redacted = redact_actual('{"token":["abc","def"],"ok":1}')
+        object_redacted = redact_actual('{"token":{"access":"abc","refresh":"def"},"ok":1}')
+        prefixed_redacted = redact_actual('error payload: {"token":["abc","def"],"ok":1}')
+        assigned_redacted = redact_actual('token={"api_key":"secret","safe":"visible"}')
+
+        self.assertEqual(array_redacted, '{"token":"<redacted>","ok":1}')
+        self.assertEqual(object_redacted, '{"token":"<redacted>","ok":1}')
+        self.assertEqual(prefixed_redacted, 'error payload: {"token":"<redacted>","ok":1}')
+        self.assertEqual(assigned_redacted, "token=<redacted>")
+        combined = array_redacted + object_redacted + prefixed_redacted + assigned_redacted
+        self.assertNotIn("abc", combined)
+        self.assertNotIn("def", combined)
+        self.assertNotIn("secret", combined)
+
+    def test_redact_actual_masks_escaped_json_secret_strings(self) -> None:
+        full = redact_actual('"{\\"token\\":\\"abc\\",\\"ok\\":1}"')
+        assigned = redact_actual('payload="{\\"token\\":\\"abc\\",\\"ok\\":1}"')
+        single_quoted = redact_actual('payload=\'{\\"token\\":\\"abc\\",\\"ok\\":1}\'')
+
+        self.assertNotIn("abc", full + assigned + single_quoted)
+        self.assertIn("<redacted>", full)
+        self.assertIn("<redacted>", assigned)
+        self.assertIn("<redacted>", single_quoted)
+
+    def test_redact_actual_masks_comma_delimited_secret_assignments(self) -> None:
+        first = redact_actual("token=abc,password=pw")
+        second = redact_actual("safe=1,token=abc")
+        quoted = redact_actual('safe=1,password="pw value"')
+        after_json = redact_actual('{"safe":1},token="abc"')
+
+        combined = first + second + quoted + after_json
+        self.assertIn("token=<redacted>", first)
+        self.assertIn("password=<redacted>", first)
+        self.assertIn("safe=1,token=<redacted>", second)
+        self.assertIn("safe=1,password=<redacted>", quoted)
+        self.assertIn('{"safe":1},token=<redacted>', after_json)
+        self.assertNotIn("abc", combined)
+        self.assertNotIn("pw", combined)
+
+    def test_redact_actual_masks_malformed_json_like_secret_fields(self) -> None:
+        malformed = redact_actual('error payload: {"token":"abc",')
+        single_quoted = redact_actual("{'api_key': 'secret-value'}")
+        repr_collection = redact_actual("{'token':['abc','def'],'ok':1}")
+        assigned_repr_collection = redact_actual("token={'access':'abc','refresh':'def'}")
+        assigned_malformed_array = redact_actual("token=['abc','def',")
+        assigned_malformed_object = redact_actual('token={"access":"abc","refresh":"def",')
+        comma_malformed_object = redact_actual('safe=1,token={"access":"abc","refresh":"def",')
+        malformed_array = redact_actual('error payload: {"token":["abc","def",')
+        malformed_object = redact_actual('{"token":{"access":"abc",')
+        malformed_unquoted = redact_actual('{"token":abc,')
+        malformed_bare_key = redact_actual('{token:["abc","def",')
+        malformed_escaped = redact_actual('payload="{\\"token\\":\\"abc\\",')
+        malformed_repr = redact_actual("{'token':['abc','def',")
+
+        combined = malformed + single_quoted + repr_collection + assigned_repr_collection + assigned_malformed_array + assigned_malformed_object + comma_malformed_object + malformed_array + malformed_object + malformed_unquoted + malformed_bare_key + malformed_escaped + malformed_repr
+        self.assertNotIn("abc", combined)
+        self.assertNotIn("def", combined)
+        self.assertNotIn("secret-value", combined)
+        self.assertIn('"token":"<redacted>"', malformed)
+        self.assertEqual(single_quoted, '{"api_key":"<redacted>"}')
+        self.assertEqual(repr_collection, '{"token":"<redacted>","ok":1}')
+        self.assertEqual(assigned_repr_collection, "token=<redacted>")
+        self.assertEqual(assigned_malformed_array, "token=<redacted>")
+        self.assertEqual(assigned_malformed_object, "token=<redacted>")
+        self.assertEqual(comma_malformed_object, "safe=1,token=<redacted>")
+        self.assertIn('"token":<redacted>', malformed_array)
+        self.assertIn('"token":<redacted>', malformed_object)
+        self.assertIn('"token":<redacted>', malformed_unquoted)
+        self.assertIn("token:<redacted>", malformed_bare_key)
+        self.assertIn('\\"token\\":\\"<redacted>\\"', malformed_escaped)
+        self.assertIn("'token':<redacted>", malformed_repr)
+
     def test_redact_actual_shortens_absolute_paths_and_long_strings(self) -> None:
         redacted = redact_actual(f"/Users/joon/project/private/story.md {'x' * 220}")
 
@@ -261,7 +341,7 @@ class DiagnosticsTests(unittest.TestCase):
 
         payload = serialize_issue(issue)
 
-        self.assertEqual(payload["expected"], "/tmp/state.md")
+        self.assertEqual(payload["expected"], "<path:state.md>")
         self.assertEqual(payload["actual"], "<path:state.md>")
 
     def test_event_serializes_without_stdout_side_effects(self) -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -13,11 +14,35 @@ MAX_STRING_LENGTH = 160
 MAX_COLLECTION_ITEMS = 6
 SECRET_KEY_PATTERN = r"(?:[A-Za-z0-9]+[_.-])*(?:authorization|credential|password|secret|token|api[_-]?key|access[_-]?key)(?:[_.-](?:hash|id|key|secret|value))?"
 SENSITIVE_KEY_RE = re.compile(rf"^{SECRET_KEY_PATTERN}$", re.IGNORECASE)
+SECRET_ASSIGNMENT_PREFIX_RE = re.compile(
+    rf"(?i)(?<![A-Za-z0-9_.{{,-])(['\"]?)({SECRET_KEY_PATTERN})\1(?![A-Za-z0-9_.-])\s*[:=]\s*"
+)
 SECRET_QUOTED_ASSIGNMENT_RE = re.compile(
-    rf"(?i)(?<![A-Za-z0-9_.-])({SECRET_KEY_PATTERN})(?![A-Za-z0-9_.-])\s*[:=]\s*(['\"])(?:(?!\2).)*\2"
+    rf"(?i)(?<![A-Za-z0-9_.{{,-])(['\"]?)({SECRET_KEY_PATTERN})\1(?![A-Za-z0-9_.-])\s*[:=]\s*(['\"])(?!<redacted>\3)(?:(?!\3).)*\3"
 )
 SECRET_ASSIGNMENT_RE = re.compile(
-    rf"(?i)(?<![A-Za-z0-9_.-])({SECRET_KEY_PATTERN})(?![A-Za-z0-9_.-])\s*[:=]\s*(?:(?:bearer|basic|token)\s+)?[^\s,;]+"
+    rf"(?i)(?<![A-Za-z0-9_.{{,-])(['\"]?)({SECRET_KEY_PATTERN})\1(?![A-Za-z0-9_.-])\s*[:=]\s*(?!['\"]?<redacted>['\"]?)(?:(?:bearer|basic|token)\s+)?[^\s,;}}]+"
+)
+COMMA_SECRET_ASSIGNMENT_RE = re.compile(
+    rf"(?i)(?<=,)({SECRET_KEY_PATTERN})(?![A-Za-z0-9_.-])\s*[:=]\s*(?!['\"]?<redacted>['\"]?)(?:(?:bearer|basic|token)\s+)?[^\s,;}}]+"
+)
+COMMA_SECRET_QUOTED_ASSIGNMENT_RE = re.compile(
+    rf"(?i)(?<=,)({SECRET_KEY_PATTERN})(?![A-Za-z0-9_.-])\s*[:=]\s*(['\"])(?!<redacted>\2)(?:(?!\2).)*\2"
+)
+COMMA_SECRET_COLLECTION_ASSIGNMENT_RE = re.compile(
+    rf"(?i)(?<=,)({SECRET_KEY_PATTERN})(?![A-Za-z0-9_.-])\s*[:=]\s*[\[{{].*$"
+)
+JSON_LIKE_SECRET_FIELD_RE = re.compile(
+    rf"(?i)([{{,]\s*)(['\"])({SECRET_KEY_PATTERN})\2\s*:\s*(['\"])(?:(?!\4).)*\4"
+)
+JSON_LIKE_SECRET_UNQUOTED_FIELD_RE = re.compile(
+    rf"(?i)([{{,]\s*)(['\"])({SECRET_KEY_PATTERN})\2\s*:\s*(?!['\"]?<redacted>['\"]?)(?:\[[^\]}}]*(?:\]|$)|\{{[^\]}}]*(?:\}}|$)|[^,}}\s]+)"
+)
+JSON_LIKE_SECRET_BARE_FIELD_RE = re.compile(
+    rf"(?i)([{{,]\s*)({SECRET_KEY_PATTERN})(?![A-Za-z0-9_.-])\s*:\s*(?!<redacted>)(?:\[[^\]}}]*(?:\]|$)|\{{[^\]}}]*(?:\}}|$)|[^,}}\s]+)"
+)
+ESCAPED_JSON_SECRET_FIELD_RE = re.compile(
+    rf"(?i)((?:\\)?['\"])({SECRET_KEY_PATTERN})\1\s*:\s*((?:\\)?['\"])(?:(?!\3).)*(?:\3|(?=,|$))"
 )
 SECRET_PATH_VALUE_ASSIGNMENT_RE = re.compile(
     rf"(?i)(?<![A-Za-z0-9_.-])({SECRET_KEY_PATTERN})(?![A-Za-z0-9_.-])\s*[:=]\s*(?:(?:bearer|basic|token)\s+)?<path:[^>]+>"
@@ -68,13 +93,13 @@ def serialize_issue(issue: DiagnosticIssue) -> dict[str, Any]:
     return {
         "type": issue.type,
         "field": issue.field,
-        "expected": _json_safe(issue.expected),
+        "expected": redact_actual(_json_safe(issue.expected)),
         "actual": redact_actual(issue.actual),
         "message": redact_actual(issue.message),
-        "recovery": issue.recovery,
-        "code": issue.code,
+        "recovery": redact_actual(issue.recovery),
+        "code": redact_actual(issue.code),
         "severity": issue.severity,
-        "source": issue.source,
+        "source": redact_actual(issue.source),
     }
 
 
@@ -173,16 +198,197 @@ def _json_safe(value: Any) -> Any:
 
 
 def _redact_string(value: str) -> str:
+    structured = _redact_json_string(value)
+    if structured is not None:
+        return structured
+    value = JSON_LIKE_SECRET_FIELD_RE.sub(lambda match: f"{match.group(1)}{match.group(2)}{match.group(3)}{match.group(2)}:{match.group(4)}<redacted>{match.group(4)}", value)
+    value = _redact_sensitive_json_assignments(value)
+    value = _redact_quoted_json_strings(value)
+    value = _redact_embedded_json(value)
+    value = JSON_LIKE_SECRET_UNQUOTED_FIELD_RE.sub(lambda match: f"{match.group(1)}{match.group(2)}{match.group(3)}{match.group(2)}:<redacted>", value)
+    value = JSON_LIKE_SECRET_BARE_FIELD_RE.sub(lambda match: f"{match.group(1)}{match.group(2)}:<redacted>", value)
+    value = ESCAPED_JSON_SECRET_FIELD_RE.sub(lambda match: f"{match.group(1)}{match.group(2)}{match.group(1)}:{match.group(3)}<redacted>{match.group(3)}", value)
     value = ABSOLUTE_PATH_WITH_EXT_RE.sub(_path_placeholder, value)
     value = ABSOLUTE_PATH_BEFORE_SECRET_RE.sub(_path_before_secret_placeholder, value)
     value = ABSOLUTE_PATH_RE.sub(_path_placeholder, value)
     value = SECRET_PATH_VALUE_ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)}=<redacted>", value)
     value = SECRET_PATH_PLACEHOLDER_ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)}=<redacted>", value)
-    value = SECRET_QUOTED_ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)}=<redacted>", value)
-    value = SECRET_ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)}=<redacted>", value)
+    value = SECRET_QUOTED_ASSIGNMENT_RE.sub(lambda match: f"{match.group(2)}=<redacted>", value)
+    value = SECRET_ASSIGNMENT_RE.sub(lambda match: f"{match.group(2)}=<redacted>", value)
+    value = COMMA_SECRET_COLLECTION_ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)}=<redacted>", value)
+    value = COMMA_SECRET_QUOTED_ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)}=<redacted>", value)
+    value = COMMA_SECRET_ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)}=<redacted>", value)
     if len(value) > MAX_STRING_LENGTH:
         return f"{value[:MAX_STRING_LENGTH]}...<truncated {len(value) - MAX_STRING_LENGTH} chars>"
     return value
+
+
+def _redact_json_string(value: str) -> str | None:
+    stripped = value.strip()
+    if not (stripped.startswith("{") or stripped.startswith("[")):
+        return None
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError:
+        try:
+            parsed = ast.literal_eval(stripped)
+        except (SyntaxError, ValueError):
+            return None
+    if isinstance(parsed, str) and parsed.strip().startswith(("{", "[")):
+        redacted = redact_actual(parsed)
+        encoded = json.dumps(redacted, separators=(",", ":"))
+        return encoded if len(encoded) <= MAX_STRING_LENGTH else f"{encoded[:MAX_STRING_LENGTH]}...<truncated {len(encoded) - MAX_STRING_LENGTH} chars>"
+    redacted = redact_actual(parsed)
+    encoded = json.dumps(redacted, separators=(",", ":"))
+    return encoded if len(encoded) <= MAX_STRING_LENGTH else f"{encoded[:MAX_STRING_LENGTH]}...<truncated {len(encoded) - MAX_STRING_LENGTH} chars>"
+
+
+def _redact_sensitive_json_assignments(value: str) -> str:
+    output: list[str] = []
+    index = 0
+    changed = False
+    while index < len(value):
+        match = SECRET_ASSIGNMENT_PREFIX_RE.match(value, index)
+        if not match:
+            output.append(value[index])
+            index += 1
+            continue
+        value_start = match.end()
+        if value_start >= len(value) or value[value_start] not in "{[":
+            output.append(value[index])
+            index += 1
+            continue
+        decoded = _decode_collection_prefix(value[value_start:])
+        if decoded is None:
+            output.append(f"{match.group(2)}=<redacted>")
+            index = len(value)
+            changed = True
+            continue
+        _parsed, end = decoded
+        output.append(f"{match.group(2)}=<redacted>")
+        index = value_start + end
+        changed = True
+    return "".join(output) if changed else value
+
+
+def _redact_quoted_json_strings(value: str) -> str:
+    decoder = json.JSONDecoder()
+    output: list[str] = []
+    index = 0
+    changed = False
+    while index < len(value):
+        if value[index] not in "\"'":
+            output.append(value[index])
+            index += 1
+            continue
+        try:
+            parsed, end = decoder.raw_decode(value[index:])
+        except json.JSONDecodeError:
+            literal = _decode_quoted_literal_prefix(value[index:])
+            if literal is None:
+                output.append(value[index])
+                index += 1
+                continue
+            parsed, end = literal
+        if not (isinstance(parsed, str) and parsed.strip().startswith(("{", "["))):
+            output.append(value[index])
+            index += 1
+            continue
+        output.append(json.dumps(redact_actual(parsed), separators=(",", ":")))
+        index += end
+        changed = True
+    return "".join(output) if changed else value
+
+
+def _redact_embedded_json(value: str) -> str:
+    output: list[str] = []
+    index = 0
+    changed = False
+    while index < len(value):
+        if value[index] not in "{[":
+            output.append(value[index])
+            index += 1
+            continue
+        decoded = _decode_collection_prefix(value[index:])
+        if decoded is None:
+            output.append(value[index])
+            index += 1
+            continue
+        parsed, end = decoded
+        redacted = redact_actual(parsed)
+        output.append(json.dumps(redacted, separators=(",", ":")))
+        index += end
+        changed = True
+    return "".join(output) if changed else value
+
+
+def _decode_collection_prefix(value: str) -> tuple[Any, int] | None:
+    decoder = json.JSONDecoder()
+    try:
+        return decoder.raw_decode(value)
+    except json.JSONDecodeError:
+        pass
+    end = _balanced_collection_end(value)
+    if end <= 0:
+        return None
+    try:
+        return ast.literal_eval(value[:end]), end
+    except (SyntaxError, ValueError):
+        return None
+
+
+def _decode_quoted_literal_prefix(value: str) -> tuple[Any, int] | None:
+    end = _quoted_literal_end(value)
+    if end <= 0:
+        return None
+    try:
+        return ast.literal_eval(value[:end]), end
+    except (SyntaxError, ValueError):
+        return None
+
+
+def _balanced_collection_end(value: str) -> int:
+    if not value or value[0] not in "{[":
+        return -1
+    opening = {"{": "}", "[": "]"}
+    stack = [opening[value[0]]]
+    quote = ""
+    escaped = False
+    for index, char in enumerate(value[1:], start=1):
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = ""
+            continue
+        if char in {"'", '"'}:
+            quote = char
+            continue
+        if char in opening:
+            stack.append(opening[char])
+            continue
+        if stack and char == stack[-1]:
+            stack.pop()
+            if not stack:
+                return index + 1
+    return -1
+
+
+def _quoted_literal_end(value: str) -> int:
+    if not value or value[0] not in {"'", '"'}:
+        return -1
+    quote = value[0]
+    escaped = False
+    for index, char in enumerate(value[1:], start=1):
+        if escaped:
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        elif char == quote:
+            return index + 1
+    return -1
 
 
 def _path_placeholder(match: re.Match[str]) -> str:

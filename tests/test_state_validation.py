@@ -10,6 +10,7 @@ from pathlib import Path
 from story_automator.commands.orchestrator import cmd_orchestrator_helper
 from story_automator.commands.state import cmd_validate_state
 from story_automator.core.diagnostics import DiagnosticIssue
+from story_automator.core.frontmatter import extract_frontmatter, parse_simple_frontmatter, split_frontmatter
 from story_automator.core.state_validation import has_runtime_command_config, state_validation_payload, status_transition_error_payload, validate_state_fields, validate_status_transition
 from tests.test_replacement_unicode import _FixtureMixin, patch_env
 
@@ -293,6 +294,11 @@ class StateValidationDiagnosticsTests(_FixtureMixin, unittest.TestCase):
             ("currentStep=false", 'currentStep: "false"'),
             ("currentStep=null", 'currentStep: "null"'),
             ("currentStep=01", 'currentStep: "01"'),
+            ("currentStep=42", 'currentStep: "42"'),
+            ("currentStep=-2", 'currentStep: "-2"'),
+            ("currentStep=3.14", 'currentStep: "3.14"'),
+            ("currentStep=[one,two]", 'currentStep: "[one,two]"'),
+            ("currentStep={key:value}", 'currentStep: "{key:value}"'),
             ("currentStep=value: detail", 'currentStep: "value: detail"'),
             ("currentStep=value # detail", 'currentStep: "value # detail"'),
         ):
@@ -319,6 +325,24 @@ class StateValidationDiagnosticsTests(_FixtureMixin, unittest.TestCase):
         self.assertIn("currentStep: step-next", frontmatter)
         self.assertIn("status: body-marker", body)
         self.assertIn("currentStep: body-step", body)
+
+    def test_state_update_uses_delimiter_lines_for_frontmatter(self) -> None:
+        state_file = self._build_state_config(status="COMPLETE")
+        text = state_file.read_text(encoding="utf-8").replace("currentStep: null\n", "---not-a-delimiter: value\ncurrentStep: old\n", 1)
+        state_file.write_text(text, encoding="utf-8")
+
+        code, payload = self._state_update(state_file, "currentStep=next")
+
+        self.assertEqual(code, 0)
+        self.assertEqual(payload, {"ok": True, "updated": ["currentStep"]})
+        text = state_file.read_text(encoding="utf-8")
+        fake_delimiter_index = text.index("---not-a-delimiter: value\ncurrentStep: next\n")
+        real_closing_index = text.index("\n---\n", 4)
+        self.assertLess(fake_delimiter_index, real_closing_index)
+        self.assertEqual(parse_simple_frontmatter(text)["currentStep"], "next")
+        self.assertIn("---not-a-delimiter: value", extract_frontmatter(text))
+        frontmatter, _body = split_frontmatter(text)
+        self.assertIn("currentStep: next", frontmatter)
 
     def test_state_update_rejects_file_without_frontmatter_without_rewriting_body(self) -> None:
         state_file = self.project_root / "body-only.md"

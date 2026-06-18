@@ -69,7 +69,8 @@ def parse_output_action(args: list[str]) -> int:
     )
     if result.exit_code != 0:
         reason = "sub-agent call timed out" if result.exit_code == COMMAND_TIMEOUT_EXIT else "sub-agent call failed"
-        issues = issues_from_exception(result.error or RuntimeError(reason), source="parse-output", field="sub_agent")
+        error = result.error if isinstance(result.error, Exception) else RuntimeError(str(result.error or reason))
+        issues = issues_from_exception(error, source="parse-output", field="sub_agent")
         _emit_parse_event("orchestration.stage.result", step, reason, severity="error", issues=issues)
         print_json(parse_failure_payload(reason, issues))
         return 1

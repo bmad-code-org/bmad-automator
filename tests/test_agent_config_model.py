@@ -14,6 +14,7 @@ from story_automator.core.agent_config import (
     AgentTaskConfig,
     build_agents_file,
     has_agent_config_runtime_source,
+    load_agent_config_from_state,
     parse_agent_config_json,
     resolve_agent_for_task,
     resolve_agents,
@@ -691,6 +692,16 @@ class RetroAgentModelFromStateTests(unittest.TestCase):
         self.assertEqual(code, 0)
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["model"], "claude-opus-4-7[1m]")
+
+    def test_agent_config_state_rejects_unterminated_delimiter_like_value(self) -> None:
+        state_file = self.project_root / "retro-state.md"
+        state_file.write_text(
+            '---\nagentConfig:\n  defaultPrimary: "cod---ex"\n',
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(ValueError, "unterminated"):
+            load_agent_config_from_state(state_file)
 
 
 class MarkdownHandoffShellContractTests(unittest.TestCase):

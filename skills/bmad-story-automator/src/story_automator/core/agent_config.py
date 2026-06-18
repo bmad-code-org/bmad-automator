@@ -7,7 +7,7 @@ from typing import Any
 
 from .agent_config_frontmatter import extract_agent_config_frontmatter
 from .common import ensure_dir, file_exists, read_text, write_atomic
-from .frontmatter import extract_frontmatter
+from .frontmatter import extract_frontmatter, split_frontmatter_document
 from .runtime_layout import runtime_provider
 
 
@@ -142,7 +142,9 @@ def parse_agent_config_json(raw: str) -> AgentConfigResolved:
 
 def load_agent_config_from_state(state_file: str | Path) -> AgentConfigResolved:
     text = read_text(state_file)
-    if text.startswith("---") and len(text.split("---", 2)) < 3:
+    lines = text.splitlines()
+    frontmatter, _body = split_frontmatter_document(text)
+    if lines and lines[0].strip() == "---" and not frontmatter:
         raise ValueError("state frontmatter is unterminated")
     return parse_agent_config_frontmatter(extract_frontmatter(text))
 

@@ -92,9 +92,13 @@ def verifier_exception_payload(reason: str, exc: Exception, *, source: str, fiel
     collisions = {key: value for key, value in redacted_extra.items() if key in reserved}
     if collisions:
         caller_extra = payload.get("extra")
+        existing_caller_extra = payload.get("callerExtra")
         payload["extra"] = {"reservedFields": collisions}
         if caller_extra is not None:
-            payload["extra"]["caller"] = caller_extra
+            if existing_caller_extra is not None:
+                payload["callerExtra"] = {"extra": caller_extra, "callerExtra": existing_caller_extra}
+            else:
+                payload["callerExtra"] = caller_extra
     payload.update({"verified": False, "reason": reason, "error": redact_actual(str(exc)), "structuredIssues": serialize_issues(issues)})
     return payload
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 
-from story_automator.core.frontmatter import parse_frontmatter_content
+from story_automator.core.frontmatter import frontmatter_content, parse_frontmatter_content, split_frontmatter_document
 from story_automator.core.diagnostics import (
     issues_from_exception,
     legacy_issue_message,
@@ -133,6 +133,8 @@ def _render_frontmatter_value(key: str, value: str) -> str:
         value != stripped
         or lower in {"true", "false", "null"}
         or re.fullmatch(r"0[0-9]+", stripped)
+        or re.fullmatch(r"[-+]?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?", stripped)
+        or stripped.startswith(("[", "{"))
         or "# " in stripped
         or stripped.startswith("#")
         or ": " in stripped
@@ -142,16 +144,8 @@ def _render_frontmatter_value(key: str, value: str) -> str:
 
 
 def _split_frontmatter(text: str) -> tuple[str, str]:
-    if not text.startswith("---"):
-        return "", text
-    parts = text.split("---", 2)
-    if len(parts) < 3:
-        return "", text
-    return f"{parts[0]}---{parts[1]}---", parts[2]
+    return split_frontmatter_document(text)
 
 
 def _frontmatter_content(frontmatter: str) -> str:
-    if not frontmatter.startswith("---"):
-        return frontmatter
-    parts = frontmatter.split("---", 2)
-    return parts[1] if len(parts) >= 3 else frontmatter
+    return frontmatter_content(frontmatter)

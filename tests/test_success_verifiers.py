@@ -1455,9 +1455,22 @@ class SuccessVerifierTests(unittest.TestCase):
         self.assertEqual(payload["reason"], "verifier_contract_invalid")
         self.assertEqual(payload["error"], "--state-file requires a value")
         self.assertEqual(payload["structuredIssues"][0]["type"], "ValueError")
-        self.assertEqual(payload["extra"]["caller"], {"caller": "kept"})
+        self.assertEqual(payload["callerExtra"], {"caller": "kept"})
         self.assertEqual(payload["extra"]["reservedFields"]["verified"], True)
         self.assertEqual(payload["extra"]["reservedFields"]["error"], "caller-error")
+
+    def test_verifier_exception_payload_preserves_caller_extra_collision(self) -> None:
+        payload = verifier_exception_payload(
+            "verifier_contract_invalid",
+            ValueError("--state-file requires a value"),
+            source="verify-step",
+            verified=True,
+            extra={"caller": "kept"},
+            callerExtra={"also": "kept"},
+        )
+
+        self.assertEqual(payload["callerExtra"], {"extra": {"caller": "kept"}, "callerExtra": {"also": "kept"}})
+        self.assertEqual(payload["extra"]["reservedFields"]["verified"], True)
 
     def test_validate_story_creation_reason_redacts_sensitive_context(self) -> None:
         stdout = io.StringIO()

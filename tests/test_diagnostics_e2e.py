@@ -105,7 +105,7 @@ class DiagnosticsE2ETests(unittest.TestCase):
         event = json.loads(events_file.read_text(encoding="utf-8"))
         self.assertEqual(event["name"], "state.fields_updated")
         self.assertEqual(event["context"]["updatedFields"], ["currentStory", "currentStep"])
-        self.assertEqual(event["context"]["values"], {"currentStory": "1.2", "currentStep": "dev"})
+        self.assertEqual(event["context"]["values"], {"currentStory": '"1.2"', "currentStep": "dev"})
 
     def test_story_step_update_event_uses_rendered_frontmatter_value(self) -> None:
         state_file = self.project_root / "state.md"
@@ -172,6 +172,37 @@ class DiagnosticsE2ETests(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["structuredIssues"][0]["type"], "invalid_type")
         self.assertEqual(payload["structuredIssues"][0]["field"], "structured_issue")
+
+    def test_monitor_result_redacts_valid_structured_issue(self) -> None:
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            code = emit_monitor_result(
+                True,
+                "not_found",
+                0,
+                0,
+                "",
+                "session_gone",
+                structured_issue={
+                    "type": "session_state.invalid_json",
+                    "field": "state",
+                    "expected": "token=abc123",
+                    "actual": 'token="abc 123"',
+                    "message": "failed at /Users/joon/private/state.md",
+                    "recovery": "open /Users/joon/private/state.md",
+                    "code": "token=abc123",
+                    "source": "/Users/joon/private/source.py",
+                },
+            )
+
+        self.assertEqual(code, 0)
+        issue = json.loads(stdout.getvalue())["structuredIssues"][0]
+        self.assertEqual(issue["expected"], "token=<redacted>")
+        self.assertEqual(issue["actual"], "token=<redacted>")
+        self.assertEqual(issue["message"], "failed at <path:state.md>")
+        self.assertEqual(issue["recovery"], "open <path:state.md>")
+        self.assertEqual(issue["code"], "token=<redacted>")
+        self.assertEqual(issue["source"], "<path:source.py>")
 
     def test_malformed_agent_plan_reports_task_field_paths(self) -> None:
         issues = validate_agents_plan_payload({"stories": [{"storyId": "1.1", "tasks": {"create": {"primary": ""}}}]})

@@ -258,6 +258,19 @@ class OrchestratorParseTests(unittest.TestCase):
         self.assertEqual(mock_run.call_args.args[:4], ("claude", "-p", "--model", "sonnet"))
         self.assertEqual(mock_run.call_args.kwargs["timeout"], 33)
 
+    def test_parse_output_wraps_non_exception_command_errors(self) -> None:
+        stdout = io.StringIO()
+        with patch.dict("os.environ", {"PROJECT_ROOT": str(self.project_root)}), patch(
+            "story_automator.commands.orchestrator_parse.run_cmd",
+            return_value=CommandResult("", 1, error="raw error text"),  # type: ignore[arg-type]
+        ), redirect_stdout(stdout):
+            code = parse_output_action([str(self.output_file), "create"])
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(code, 1)
+        self.assertEqual(payload["structuredIssues"][0]["type"], "RuntimeError")
+        self.assertEqual(payload["structuredIssues"][0]["message"], "raw error text")
+
     def _install_bundle(self) -> None:
         source_skill = REPO_ROOT / "skills" / "bmad-story-automator"
         source_review = REPO_ROOT / "skills" / "bmad-story-automator-review"

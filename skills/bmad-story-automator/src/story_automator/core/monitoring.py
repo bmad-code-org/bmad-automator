@@ -55,7 +55,18 @@ def _normalize_structured_issue(structured_issue: dict[str, Any] | None) -> dict
     if structured_issue is None:
         return None
     if isinstance(structured_issue, dict) and isinstance(structured_issue.get("type"), str) and isinstance(structured_issue.get("field"), str):
-        return structured_issue
+        issue = DiagnosticIssue(
+            type=str(structured_issue.get("type") or ""),
+            field=str(structured_issue.get("field") or ""),
+            expected=structured_issue.get("expected", ""),
+            actual=structured_issue.get("actual", ""),
+            message=str(structured_issue.get("message") or ""),
+            recovery=str(structured_issue.get("recovery") or ""),
+            code=str(structured_issue.get("code") or ""),
+            severity=str(structured_issue.get("severity") or "error"),
+            source=str(structured_issue.get("source") or "monitor-session"),
+        )
+        return serialize_issues([issue])[0]
     issue = DiagnosticIssue(
         type="invalid_type",
         field="structured_issue",
