@@ -179,6 +179,25 @@ class OrchestratorEpicAgentsTests(unittest.TestCase):
         self.assertFalse(payload["blocking"])
         self.assertEqual(payload["dependents"], [])
 
+    def test_check_blocking_accepts_nested_numeric_story_dependencies(self) -> None:
+        path = self.project_root / "_bmad-output" / "implementation-artifacts" / "epic-1.2.md"
+        path.write_text(
+            textwrap.dedent(
+                """
+                ## Epic 1.2: Nested
+                ### 1.2.4: Later
+                Dependencies: 1.2.3
+                """
+            ),
+            encoding="utf-8",
+        )
+        exit_code, payload = self._run_action(check_blocking_action, ["1.2.3"])
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["blocking"])
+        self.assertEqual(payload["epic"], "1.2")
+        self.assertEqual(payload["dependents"], ["1.2.4"])
+
     def test_get_epic_stories_state_file_accepts_non_numeric_full_keys(self) -> None:
         state_file = self._write_state(
             """
@@ -281,6 +300,24 @@ class OrchestratorEpicAgentsTests(unittest.TestCase):
         self.assertEqual(payload["stories"], ["multi-leg-3-old", "multi-leg-4-next"])
         self.assertEqual(payload["count"], 2)
 
+    def test_get_epic_stories_epic_file_accepts_bmad_numbered_headers(self) -> None:
+        path = self.project_root / "_bmad-output" / "implementation-artifacts" / "epic-1.md"
+        path.write_text(
+            textwrap.dedent(
+                """
+                ## Epic 1: Platform
+                ### 1.3: Quantity
+                ### 1.4: Next
+                """
+            ),
+            encoding="utf-8",
+        )
+        exit_code, payload = self._run_action(get_epic_stories_action, ["1"])
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["stories"], ["1.3", "1.4"])
+        self.assertEqual(payload["count"], 2)
+
     def test_get_epic_stories_epic_file_ignores_other_epic_full_key_headers(self) -> None:
         path = self.project_root / "_bmad-output" / "implementation-artifacts" / "epic-multi-leg.md"
         path.write_text(
@@ -357,6 +394,45 @@ class OrchestratorEpicAgentsTests(unittest.TestCase):
         self.assertTrue(payload["blocking"])
         self.assertEqual(payload["dependents"], ["multi-leg-4-next"])
         self.assertEqual(payload["source"], "epic_file")
+
+    def test_check_blocking_accepts_bmad_numbered_headers(self) -> None:
+        path = self.project_root / "_bmad-output" / "implementation-artifacts" / "epic-1.md"
+        path.write_text(
+            textwrap.dedent(
+                """
+                ## Epic 1: Platform
+                ### 1.4: Later
+                Dependencies: 1.3
+                """
+            ),
+            encoding="utf-8",
+        )
+        exit_code, payload = self._run_action(check_blocking_action, ["1.3"])
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["blocking"])
+        self.assertEqual(payload["dependents"], ["1.4"])
+        self.assertEqual(payload["source"], "epic_file")
+
+    def test_check_blocking_ignores_nonmatching_subheading_inside_explicit_epic(self) -> None:
+        path = self.project_root / "_bmad-output" / "implementation-artifacts" / "epic-1.md"
+        path.write_text(
+            textwrap.dedent(
+                """
+                ## Epic 1: Platform
+                ### 1.2: Later
+                Details before a story-like subheading.
+                ### 2.0: Non-story subheading
+                Dependencies: 1.1
+                """
+            ),
+            encoding="utf-8",
+        )
+        exit_code, payload = self._run_action(check_blocking_action, ["1.1"])
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["blocking"])
+        self.assertEqual(payload["dependents"], ["1.2"])
 
     def test_check_blocking_accepts_full_key_header_in_suffixed_epic_file(self) -> None:
         self._write_epic_file(

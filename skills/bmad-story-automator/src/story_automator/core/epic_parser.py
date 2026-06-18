@@ -9,6 +9,10 @@ from .common import read_text, trim_lines
 from .story_keys import normalize_story_key, normalize_story_key_for_epic
 
 
+STORY_HEADER_RE = re.compile(r"^###\s+(?:(?:Story\s+)?(\d+(?:\.\d+)+)|Story\s+([^:]+)):\s*(.*)$", re.IGNORECASE)
+EPIC_HEADER_RE = re.compile(r"^##\s+Epic\s+([A-Za-z][\w-]*|\d+(?:\.\d+)*):\s*(.*)$", re.IGNORECASE)
+
+
 def parse_epic_file(epic_file: str | Path) -> dict[str, Any]:
     content = read_text(epic_file)
     lines = trim_lines(content)
@@ -18,20 +22,19 @@ def parse_epic_file(epic_file: str | Path) -> dict[str, Any]:
         if line.startswith("# "):
             epic_title = line.removeprefix("# ").strip()
             break
-    story_re = re.compile(r"^###\s+Story\s+([^:]+):\s*(.*)$")
-    epic_re = re.compile(r"^##\s+Epic\s+([A-Za-z][\w-]*|\d+):\s*(.*)$")
     current_epic = ""
     current_epic_title = ""
     stories: list[dict[str, str]] = []
     for line in lines:
-        epic_match = epic_re.match(line)
+        epic_match = EPIC_HEADER_RE.match(line)
         if epic_match:
             current_epic = epic_match.group(1).strip()
             current_epic_title = epic_match.group(2).strip()
             continue
-        story_match = story_re.match(line)
+        story_match = STORY_HEADER_RE.match(line)
         if story_match:
-            raw_story, title = story_match.groups()
+            numeric_story, named_story, title = story_match.groups()
+            raw_story = numeric_story or named_story or ""
             story_key = _normalize_header_story(project_root, current_epic, raw_story.strip())
             if story_key is None:
                 continue
@@ -55,24 +58,27 @@ def parse_story(epic_file: str | Path, story_id: str, rules_file: str | Path) ->
     content = read_text(epic_file)
     lines = trim_lines(content)
     project_root = _project_root_for_epic_file(epic_file)
-    epic_re = re.compile(r"^##\s+Epic\s+([A-Za-z][\w-]*|\d+):")
-    header_re = re.compile(r"^###\s+Story\s+([^:]+):\s*(.*)$")
     target_id = story_id
     start_index = -1
     title = ""
     current_epic = ""
     for index, line in enumerate(lines):
-        epic_match = epic_re.match(line)
+        epic_match = EPIC_HEADER_RE.match(line)
         if epic_match:
             current_epic = epic_match.group(1).strip()
             continue
-        match = header_re.match(line)
+        match = STORY_HEADER_RE.match(line)
         if match:
-            raw_story, raw_title = match.groups()
+            numeric_story, named_story, raw_title = match.groups()
+            raw_story = numeric_story or named_story or ""
             story_key = _normalize_header_story(project_root, current_epic, raw_story.strip())
             if story_key is None:
                 continue
-            if target_id not in {raw_story.strip(), story_key.id, story_key.prefix, story_key.key}:
+            target_aliases = {raw_story.strip(), story_key.id, story_key.prefix, story_key.key}
+            title_slug = _slugify_title(raw_title)
+            if title_slug and not _is_explicit_header_story(raw_story.strip(), story_key.id):
+                target_aliases.add(f"{story_key.prefix}-{title_slug}")
+            if target_id not in target_aliases:
                 continue
             start_index = index
             target_id = story_key.id
@@ -84,9 +90,15 @@ def parse_story(epic_file: str | Path, story_id: str, rules_file: str | Path) ->
     acceptance_criteria: list[str] = []
     dependencies = ""
     in_ac = False
+    content_epic = current_epic
     for line in lines[start_index + 1 :]:
-        if line.startswith("### Story ") or line.startswith("## Epic "):
+        if EPIC_HEADER_RE.match(line):
             break
+        boundary_match = STORY_HEADER_RE.match(line)
+        if boundary_match:
+            raw_story = (boundary_match.group(1) or boundary_match.group(2) or "").strip()
+            if _normalize_header_story(project_root, content_epic, raw_story) is not None:
+                break
         if "Acceptance Criteria" in line:
             in_ac = True
             continue
@@ -157,11 +169,14 @@ def _project_root_for_epic_file(epic_file: str | Path) -> str:
 
 
 def _normalize_header_story(project_root: str, current_epic: str, raw_story: str):
-    if current_epic:
-        story_key = normalize_story_key_for_epic(project_root, current_epic, raw_story)
-        if story_key is not None:
-            return story_key
-    return normalize_story_key(project_root, raw_story)
+    if not current_epic:
+        return normalize_story_key(project_root, raw_story)
+    story_key = normalize_story_key_for_epic(project_root, current_epic, raw_story)
+    if story_key is None:
+        return None
+    if story_key.id != current_epic and not story_key.id.startswith(f"{current_epic}."):
+        return None
+    return story_key
 
 
 def parse_story_range(user_input: str, total: int, ids_csv: str = "") -> dict[str, Any]:
@@ -170,19 +185,29 @@ def parse_story_range(user_input: str, total: int, ids_csv: str = "") -> dict[st
     ids = [part.strip() for part in ids_csv.split(",")] if ids_csv else []
     selected: set[int] = set()
     normalized = user_input.lower().replace(" ", "")
+    id_index = {story_id.lower(): index + 1 for index, story_id in enumerate(ids)}
     if normalized == "all":
         selected = set(range(1, total + 1))
     else:
         for part in normalized.split(","):
             if not part:
                 continue
-            if "-" in part:
+            if part in id_index:
+                selected.add(id_index[part])
+            elif "-" in part:
                 start_raw, end_raw = part.split("-", 1)
                 if start_raw.isdigit() and end_raw.isdigit():
                     start = int(start_raw)
                     end = int(end_raw)
                     low, high = sorted((start, end))
                     selected.update(range(low, high + 1))
+                elif start_raw in id_index and end_raw in id_index:
+                    start = id_index[start_raw]
+                    end = id_index[end_raw]
+                    low, high = sorted((start, end))
+                    selected.update(range(low, high + 1))
+                else:
+                    raise ValueError(f"invalid_story_range:{part}")
             elif part.isdigit():
                 selected.add(int(part))
     indices = sorted(index for index in selected if 1 <= index <= total)
@@ -219,8 +244,7 @@ def _story_aliases(story: dict[str, str]) -> set[str]:
     if story_key:
         aliases.add(story_key)
     if not _is_explicit_header_story(header_story, story_id):
-        epic, _, story_num = story_id.rpartition(".")
-        prefix = f"{epic}-{story_num}"
+        prefix = story_id.replace(".", "-")
         aliases.add(prefix)
         title_slug = _slugify_title(story.get("title", ""))
         if title_slug:
@@ -231,16 +255,15 @@ def _story_aliases(story: dict[str, str]) -> set[str]:
 def _is_explicit_header_story(header_story: str, story_id: str) -> bool:
     if not header_story:
         return False
-    epic, _, story_num = story_id.rpartition(".")
-    return header_story not in {story_id, f"{epic}-{story_num}"}
+    return header_story not in {story_id, story_id.replace(".", "-")}
 
 
 def _slugify_title(title: str) -> str:
     return "-".join(part for part in re.split(r"[^A-Za-z0-9]+", title.lower()) if part)
 
 
-def _story_sort_key(value: str) -> tuple[int, int, str, int, str]:
+def _story_sort_key(value: str) -> tuple[int, tuple[int, ...], str, int, str]:
     epic, _, story_num = value.rpartition(".")
-    if epic.isdigit():
-        return (0, int(epic), "", int(story_num) if story_num.isdigit() else 0, value)
-    return (1, 0, epic, int(story_num) if story_num.isdigit() else 0, value)
+    if all(part.isdigit() for part in value.split(".")):
+        return (0, tuple(int(part) for part in value.split(".")), "", 0, value)
+    return (1, (), epic, int(story_num) if story_num.isdigit() else 0, value)

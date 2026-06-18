@@ -148,6 +148,7 @@ For a release version `X.Y.Z`, update these files:
 - `skills/module.yaml`: `module_version`
 - `skills/bmad-story-automator/pyproject.toml`: Python package version
 - `skills/bmad-story-automator/src/story_automator/__init__.py`: runtime version
+- `skills/bmad-story-automator/workflow.md`: workflow frontmatter version
 - docs or changelog entries that mention the shipped version
 
 For preview versions, use semver in Node/plugin/module metadata and PEP 440 in
@@ -200,6 +201,7 @@ v1.16.0-next.0
 ```bash
 npm run verify
 npm pack --dry-run
+npm run smoke:deterministic-full
 ```
 
 4. Commit the preview.
@@ -207,7 +209,9 @@ npm pack --dry-run
 ```bash
 git add package.json .claude-plugin/plugin.json .claude-plugin/marketplace.json \
   skills/module.yaml skills/bmad-story-automator/pyproject.toml \
-  skills/bmad-story-automator/src/story_automator/__init__.py
+  skills/bmad-story-automator/src/story_automator/__init__.py \
+  skills/bmad-story-automator/workflow.md \
+  <changed version docs and changelog files>
 git commit -m "chore: prepare next preview"
 ```
 
@@ -299,6 +303,7 @@ Update every file listed in [Files To Bump](#files-to-bump).
 ```bash
 npm run verify
 npm pack --dry-run
+npm run smoke:deterministic-full
 ```
 
 5. Commit the stable bump if it was not already part of the merge.
@@ -306,7 +311,9 @@ npm pack --dry-run
 ```bash
 git add package.json .claude-plugin/plugin.json .claude-plugin/marketplace.json \
   skills/module.yaml skills/bmad-story-automator/pyproject.toml \
-  skills/bmad-story-automator/src/story_automator/__init__.py
+  skills/bmad-story-automator/src/story_automator/__init__.py \
+  skills/bmad-story-automator/workflow.md \
+  <changed version docs and changelog files>
 git commit -m "chore: release v1.16.0"
 ```
 
@@ -446,6 +453,7 @@ For each preview or stable release, record:
 - changed version files
 - `npm run verify` result
 - `npm pack --dry-run` result
+- `npm run smoke:deterministic-full` result for release candidates
 - install smoke commands and manifest excerpts
 - npm publish status, including skipped publishes
 - rollback note and known installer caveats

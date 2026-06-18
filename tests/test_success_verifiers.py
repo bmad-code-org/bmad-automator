@@ -745,6 +745,13 @@ class SuccessVerifierTests(unittest.TestCase):
         self.assertTrue(payload["verified"])
         self.assertEqual(payload["doneStories"], 2)
 
+    def test_epic_complete_uses_nested_numeric_epic_identifier(self) -> None:
+        self._write_sprint_status("1-2-3-story-three: done\n1-2-4-story-four: done\n")
+        payload = epic_complete(project_root=str(self.project_root), story_key="1.2.3")
+        self.assertTrue(payload["verified"])
+        self.assertEqual(payload["epic"], "1.2")
+        self.assertEqual(payload["doneStories"], 2)
+
     def test_epic_complete_accepts_bare_epic_id(self) -> None:
         self._write_sprint_status("1-1-story-one: done\n1-2-story-two: done\n")
         payload = epic_complete(project_root=str(self.project_root), story_key="1")
