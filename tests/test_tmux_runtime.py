@@ -10,6 +10,7 @@ from pathlib import Path
 
 from story_automator.core.tmux_runtime import (
     PaneSnapshot,
+    agent_type,
     _check_prompt_visible,
     _claude_completion_marker_present,
     _legacy_heartbeat_check,
@@ -496,6 +497,49 @@ class TmuxRuntimeStateTests(unittest.TestCase):
         self.assertEqual(status, "alive")
         self.assertEqual(pid, "12")
         find_pid.assert_called_once_with("10", "gemini", 0)
+
+
+class AgentTypeResolutionTests(unittest.TestCase):
+    def test_auto_resolves_through_runtime_provider(self) -> None:
+        with (
+            mock.patch.dict(os.environ, {"AI_AGENT": "auto"}, clear=False),
+            mock.patch("story_automator.core.tmux_runtime.runtime_provider", return_value="codex"),
+        ):
+            self.assertEqual(agent_type(), "codex")
+
+    def test_runtime_resolves_through_runtime_provider(self) -> None:
+        with (
+            mock.patch.dict(os.environ, {"AI_AGENT": " RUNTIME "}, clear=False),
+            mock.patch("story_automator.core.tmux_runtime.runtime_provider", return_value="claude"),
+        ):
+            self.assertEqual(agent_type(), "claude")
+
+    def test_empty_resolves_through_runtime_provider(self) -> None:
+        with (
+            mock.patch.dict(os.environ, {"AI_AGENT": ""}, clear=False),
+            mock.patch("story_automator.core.tmux_runtime.runtime_provider", return_value="claude"),
+        ):
+            self.assertEqual(agent_type(), "claude")
+
+    def test_builtin_agent_passes_through_without_provider(self) -> None:
+        with (
+            mock.patch.dict(os.environ, {"AI_AGENT": " Gemini "}, clear=False),
+            mock.patch(
+                "story_automator.core.tmux_runtime.runtime_provider",
+                side_effect=AssertionError("runtime_provider must not be consulted for explicit agents"),
+            ),
+        ):
+            self.assertEqual(agent_type(), "gemini")
+
+    def test_custom_agent_name_passes_through(self) -> None:
+        with (
+            mock.patch.dict(os.environ, {"AI_AGENT": "gemini-pro"}, clear=False),
+            mock.patch(
+                "story_automator.core.tmux_runtime.runtime_provider",
+                side_effect=AssertionError("runtime_provider must not be consulted for explicit agents"),
+            ),
+        ):
+            self.assertEqual(agent_type(), "gemini-pro")
 
 
 class PaneDescendantDetectionTests(unittest.TestCase):

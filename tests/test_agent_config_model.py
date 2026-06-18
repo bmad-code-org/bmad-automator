@@ -73,6 +73,38 @@ class AgentCliModelTests(unittest.TestCase):
         with patch.dict(os.environ, {"AI_COMMAND_MY_AGENT": "legacy-agent --prompt"}, clear=False):
             self.assertEqual(agent_cli("my-agent"), "legacy-agent --prompt")
 
+    def test_agent_cli_custom_command_with_trailing_prompt_flag_keeps_model_before_p(self) -> None:
+        # Regression: a custom Gemini-like command ending in `-p` consumes the
+        # next token as the prompt. The model must be injected before `-p`, not
+        # appended after it (where `-p` would swallow it).
+        with patch.dict(
+            os.environ,
+            {"STORY_AUTOMATOR_AGENT_GEMINI_PRO_COMMAND": "gemini --approval-mode yolo -p"},
+            clear=False,
+        ):
+            cli = agent_cli("gemini-pro", "gemini-2.5-pro")
+        self.assertEqual(cli, "gemini --approval-mode yolo --model gemini-2.5-pro -p")
+        self.assertTrue(cli.endswith(" -p"), cli)
+        self.assertNotIn("-p --model", cli)
+
+    def test_agent_cli_custom_command_trailing_prompt_flag_quotes_model(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"STORY_AUTOMATOR_AGENT_GEMINI_PRO_COMMAND": "gemini -p"},
+            clear=False,
+        ):
+            cli = agent_cli("gemini-pro", "gemini pro[exp]")
+        self.assertEqual(cli, "gemini --model 'gemini pro[exp]' -p")
+
+    def test_agent_cli_custom_command_without_trailing_prompt_flag_appends_model(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"STORY_AUTOMATOR_AGENT_MY_AGENT_COMMAND": "my-agent run"},
+            clear=False,
+        ):
+            cli = agent_cli("my-agent", "some-model")
+        self.assertEqual(cli, "my-agent run --model some-model")
+
     def test_agent_process_pattern_supports_gemini_and_custom(self) -> None:
         self.assertEqual(agent_process_pattern("gemini"), "gemini")
         self.assertEqual(agent_process_pattern("my-agent"), "my-agent")

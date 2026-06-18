@@ -80,7 +80,10 @@ def generate_session_name(step: str, epic: str, story_id: str, cycle: str = "") 
 
 def agent_type() -> str:
     value = normalize_agent_name(os.environ.get("AI_AGENT", ""))
-    if value:
+    # `auto`/`runtime` are meta-selectors, not agent names: resolve them through
+    # the runtime provider so they never flow into agent_cli() (which rejects
+    # them). Built-ins and configured custom agent names pass through verbatim.
+    if value and value not in {"auto", "runtime"}:
         return value
     return runtime_provider()
 
@@ -107,7 +110,14 @@ def agent_cli(agent: str, model: str = "") -> str:
             f"or set STORY_AUTOMATOR_AGENT_{env_agent_name(agent)}_COMMAND"
         )
     if model:
-        base = f"{base} --model {shlex.quote(model)}"
+        quoted = shlex.quote(model)
+        if custom and base.endswith(" -p"):
+            # Custom CLIs that end in the prompt flag (e.g. a Gemini-like
+            # `... -p`) consume the next token as the prompt, so `--model` must
+            # precede `-p`; appending it afterwards would let `-p` swallow it.
+            base = f"{base[: -len(' -p')]} --model {quoted} -p"
+        else:
+            base = f"{base} --model {quoted}"
     return base
 
 
