@@ -141,7 +141,7 @@ def cmd_ensure_stop_hook(args: list[str]) -> int:
 
 
 def cmd_stop_hook(_: list[str]) -> int:
-    sys.stdin.read()
+    raw = sys.stdin.read()
     if os.environ.get("STORY_AUTOMATOR_CHILD", "").lower() == "true":
         return 0
     marker = active_marker_path()
@@ -151,6 +151,16 @@ def cmd_stop_hook(_: list[str]) -> int:
         payload = json.loads(marker.read_text())
     except json.JSONDecodeError:
         return 0
+    owner = (payload.get("ownerSession") or "").strip()
+    if owner:
+        sid = ""
+        try:
+            if raw.strip():
+                sid = (json.loads(raw) or {}).get("session_id", "") or ""
+        except json.JSONDecodeError:
+            sid = ""
+        if sid and sid != owner:
+            return 0
     remaining = payload.get("storiesRemaining", 0)
     if isinstance(remaining, str) and remaining.isdigit():
         remaining = int(remaining)

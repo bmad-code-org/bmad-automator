@@ -191,6 +191,7 @@ def _marker(args: list[str]) -> int:
             "heartbeat": options["heartbeat"] or iso_now(),
             "pid": int(options["pid"] or "0"),
             "projectSlug": options["project-slug"],
+            "ownerSession": os.environ.get("CLAUDE_CODE_SESSION_ID", ""),
         }
         atomic_write(marker_file, json.dumps(payload, indent=2) + "\n")
         print(f"Marker created: {marker_file}")

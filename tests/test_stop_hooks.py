@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from story_automator.commands.basic import cmd_ensure_stop_hook, cmd_stop_hook
+from story_automator.commands.orchestrator import cmd_orchestrator_helper
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -415,6 +416,56 @@ class StopHookTests(unittest.TestCase):
         self.assertEqual(code, 0)
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["decision"], "block")
+
+    def test_stop_hook_blocks_the_owning_session(self) -> None:
+        self._install_bundle(".agents")
+        marker = self.project_root / ".agents" / ".story-automator-active"
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(json.dumps({"storiesRemaining": 2, "ownerSession": "owner-123"}), encoding="utf-8")
+        stdout = io.StringIO()
+        with (
+            patch.dict(os.environ, {"PROJECT_ROOT": str(self.project_root)}, clear=False),
+            patch("story_automator.commands.basic.sys.stdin", io.StringIO(json.dumps({"session_id": "owner-123"}))),
+            patch("os.getcwd", return_value=str(self.project_root)),
+            redirect_stdout(stdout),
+        ):
+            code = cmd_stop_hook([])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(stdout.getvalue())["decision"], "block")
+
+    def test_stop_hook_allows_a_different_session_while_run_active(self) -> None:
+        self._install_bundle(".agents")
+        marker = self.project_root / ".agents" / ".story-automator-active"
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(json.dumps({"storiesRemaining": 2, "ownerSession": "owner-123"}), encoding="utf-8")
+        stdout = io.StringIO()
+        with (
+            patch.dict(os.environ, {"PROJECT_ROOT": str(self.project_root)}, clear=False),
+            patch("story_automator.commands.basic.sys.stdin", io.StringIO(json.dumps({"session_id": "other-session"}))),
+            patch("os.getcwd", return_value=str(self.project_root)),
+            redirect_stdout(stdout),
+        ):
+            code = cmd_stop_hook([])
+        self.assertEqual(code, 0)
+        self.assertEqual(stdout.getvalue(), "")
+
+    def test_marker_create_records_owner_session_from_env(self) -> None:
+        self._install_bundle(".agents")
+        stdout = io.StringIO()
+        with (
+            patch.dict(
+                os.environ,
+                {"PROJECT_ROOT": str(self.project_root), "CLAUDE_CODE_SESSION_ID": "owner-xyz"},
+                clear=False,
+            ),
+            patch("os.getcwd", return_value=str(self.project_root)),
+            redirect_stdout(stdout),
+        ):
+            code = cmd_orchestrator_helper(["marker", "create", "--epic", "e1", "--story", "e1-1", "--remaining", "2"])
+        self.assertEqual(code, 0)
+        marker = self.project_root / ".agents" / ".story-automator-active"
+        payload = json.loads(marker.read_text(encoding="utf-8"))
+        self.assertEqual(payload["ownerSession"], "owner-xyz")
 
     def test_ensure_stop_hook_codex_updates_dotted_features_toml(self) -> None:
         self._install_bundle(".agents")
