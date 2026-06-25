@@ -24,7 +24,7 @@ from story_automator.core.review_verify import verify_code_review_completion
 from story_automator.core.runtime_layout import active_marker_path, active_marker_project_entry
 from story_automator.core.success_verifiers import resolve_success_contract, run_success_verifier
 from story_automator.core.sprint import sprint_status_epic, sprint_status_get
-from story_automator.core.story_keys import normalize_story_key, sprint_status_file
+from story_automator.core.story_keys import StoryKey, normalize_story_key, resolve_bare_story_for_epic, sprint_status_file
 from story_automator.core.utils import (
     atomic_write,
     ensure_dir,
@@ -87,7 +87,7 @@ def _usage(code: int) -> int:
     print("Usage: orchestrator-helper <action> [args]", file=target)
     print("", file=target)
     print("Actions:", file=target)
-    print("  sprint-status get <story_key>", file=target)
+    print("  sprint-status get <story_key> [--epic E]   (--epic disambiguates a bare number across epics)", file=target)
     print("  sprint-status exists", file=target)
     print("  sprint-status check-epic <epic>", file=target)
     print("  parse-output <file> <step>", file=target)
@@ -103,7 +103,7 @@ def _usage(code: int) -> int:
     print("  state-update <file> --set k=v", file=target)
     print("  escalate <trigger> <context>", file=target)
     print("  commit-ready <story_id>", file=target)
-    print("  normalize-key <input> [--to id|key|prefix|json]", file=target)
+    print("  normalize-key <input> [--to id|key|prefix|json] [--epic E]   (--epic disambiguates a bare number across epics)", file=target)
     print("  story-file-status <story>", file=target)
     print("  verify-step <step> <story_or_epic> [--state-file path] [--output-file path]", file=target)
     print("  verify-code-review <story>", file=target)
@@ -124,9 +124,15 @@ def _sprint_status(args: list[str]) -> int:
     try:
         if args[0] == "get":
             if len(args) < 2:
-                print("Usage: orchestrator-helper sprint-status get <story_key>", file=__import__("sys").stderr)
+                print("Usage: orchestrator-helper sprint-status get <story_key> [--epic E]", file=__import__("sys").stderr)
                 return 1
-            status = sprint_status_get(project_root, args[1])
+            lookup = args[1]
+            epic = _flag_after(args, "--epic")
+            if epic:
+                sk = _resolve_with_epic(project_root, args[1], epic)
+                if sk is not None and sk.key:
+                    lookup = sk.key
+            status = sprint_status_get(project_root, lookup)
             if not status.found and status.reason:
                 print_json({"found": False, "status": status.status, "reason": status.reason})
                 return 0
@@ -390,15 +396,29 @@ def _commit_ready(args: list[str]) -> int:
     return 0
 
 
+def _resolve_with_epic(project_root: str, value: str, epic: str) -> StoryKey | None:
+    if epic:
+        sk = resolve_bare_story_for_epic(project_root, value, epic)
+        if sk is not None:
+            return sk
+    return normalize_story_key(project_root, value)
+
+
+def _flag_after(args: list[str], flag: str) -> str:
+    for idx, a in enumerate(args):
+        if a == flag and idx + 1 < len(args):
+            return args[idx + 1]
+    return ""
+
+
 def _normalize_key(args: list[str]) -> int:
     if not args:
         print_json({"ok": False, "error": "input required"})
         return 1
-    fmt = "json"
-    if len(args) >= 3 and args[1] == "--to":
-        fmt = args[2]
+    fmt = _flag_after(args, "--to") or "json"
+    epic = _flag_after(args, "--epic")
     try:
-        result = normalize_story_key(get_project_root(), args[0])
+        result = _resolve_with_epic(get_project_root(), args[0], epic)
     except (OSError, ValueError) as exc:
         print_json({"ok": False, "error": str(exc), "input": args[0]})
         return 1

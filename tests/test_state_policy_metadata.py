@@ -343,6 +343,25 @@ class StatePolicyMetadataTests(unittest.TestCase):
         rendered = stdout.getvalue()
         self.assertIn("unset CLAUDECODE && claude --print", rendered)
 
+    def test_build_cmd_epic_targets_the_matching_epics_story_file(self) -> None:
+        artifacts = self.project_root / "_bmad-output" / "implementation-artifacts"
+        artifacts.mkdir(parents=True, exist_ok=True)
+        (artifacts / "sprint-status.yaml").write_text(
+            "alpha-1-build-foo: ready-for-dev\nbeta-1-build-bar: ready-for-dev\n",
+            encoding="utf-8",
+        )
+        for epic, expected, other in (
+            ("alpha", "alpha-1-build-foo.md", "beta-1-build-bar.md"),
+            ("beta", "beta-1-build-bar.md", "alpha-1-build-foo.md"),
+        ):
+            stdout = io.StringIO()
+            with patch_env(self.project_root), redirect_stdout(stdout):
+                code = _build_cmd(["auto", "1", "--epic", epic])
+            self.assertEqual(code, 0)
+            rendered = stdout.getvalue()
+            self.assertIn(expected, rendered)
+            self.assertNotIn(other, rendered)
+
     def test_retro_agent_uses_per_task_override_from_state(self) -> None:
         state_file = self.project_root / "retro-state.md"
         state_file.write_text(

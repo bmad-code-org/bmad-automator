@@ -13,6 +13,7 @@ def render_step_prompt(
     story_id: str,
     story_prefix: str,
     extra_instruction: str,
+    story_key: str = "",
 ) -> str:
     prompt_cfg = _dict_value(contract.get("prompt"))
     assets_cfg = _dict_value(contract.get("assets"))
@@ -21,6 +22,7 @@ def render_step_prompt(
     replacements = {
         "{{story_id}}": story_id,
         "{{story_prefix}}": story_prefix,
+        "{{story_key}}": story_key or story_prefix,
         "{{label}}": str(contract.get("label") or ""),
         "{{implementation_artifacts}}": implementation_artifacts_relpath(project_root),
         "{{skill_line}}": _prompt_line("READ this skill first", str(assets.get("skill") or "")),
