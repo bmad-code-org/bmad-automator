@@ -145,6 +145,29 @@ class OrchestratorParseTests(unittest.TestCase):
         self.assertEqual(mock_run.call_args.args[:4], ("claude", "-p", "--model", "sonnet"))
         self.assertEqual(mock_run.call_args.kwargs["timeout"], 33)
 
+    def test_parse_schema_supports_tea_step_from_override(self) -> None:
+        self._install_tea_skills()
+        override_dir = self.project_root / "_bmad" / "bmm"
+        override_dir.mkdir(parents=True, exist_ok=True)
+        (override_dir / "story-automator.policy.json").write_text(
+            json.dumps(
+                {
+                    "workflow": {"sequence": ["create", "atdd", "dev", "review"]},
+                    "steps": {"atdd": _tea_steps_override(self.project_root)["atdd"]},
+                }
+            ),
+            encoding="utf-8",
+        )
+        stdout = io.StringIO()
+        with patch.dict("os.environ", {"PROJECT_ROOT": str(self.project_root)}), patch(
+            "story_automator.commands.orchestrator_parse.run_cmd",
+            return_value=CommandResult('{"status":"SUCCESS","failing_tests_created":true,"summary":"ok","next_action":"proceed"}', 0),
+        ), redirect_stdout(stdout):
+            code = parse_output_action([str(self.output_file), "atdd"])
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertTrue(payload["failing_tests_created"])
+
     def _install_bundle(self) -> None:
         source_skill = REPO_ROOT / "skills" / "bmad-story-automator"
         source_review = REPO_ROOT / "skills" / "bmad-story-automator-review"
@@ -164,6 +187,19 @@ class OrchestratorParseTests(unittest.TestCase):
         (self.project_root / ".claude" / "skills" / "bmad-create-story" / "template.md").write_text("# template\n", encoding="utf-8")
         (self.project_root / ".claude" / "skills" / "bmad-dev-story" / "checklist.md").write_text("# checklist\n", encoding="utf-8")
         (self.project_root / ".claude" / "skills" / "bmad-qa-generate-e2e-tests" / "checklist.md").write_text("# checklist\n", encoding="utf-8")
+
+    def _install_tea_skills(self) -> None:
+        _write_tea_assets(self.project_root)
+        for name in (
+            "bmad-tea-testarch-atdd",
+            "bmad-tea-testarch-automate",
+            "bmad-tea-testarch-test-review",
+            "bmad-tea-testarch-trace",
+        ):
+            skill_dir = self.project_root / ".claude" / "skills" / name
+            skill_dir.mkdir(parents=True, exist_ok=True)
+            (skill_dir / "SKILL.md").write_text(f"# {name}\n", encoding="utf-8")
+            (skill_dir / "workflow.md").write_text(f"# {name}\n", encoding="utf-8")
 
     def _build_state(self) -> Path:
         output_dir = self.project_root / "_bmad-output" / "story-automator"
@@ -190,6 +226,42 @@ class OrchestratorParseTests(unittest.TestCase):
                 ]
             )
         return Path(json.loads(stdout.getvalue())["path"])
+
+
+def _write_tea_assets(project_root: Path) -> None:
+    prompts = project_root / "_bmad" / "tea" / "story-automator" / "prompts"
+    parse = project_root / "_bmad" / "tea" / "story-automator" / "parse"
+    prompts.mkdir(parents=True, exist_ok=True)
+    parse.mkdir(parents=True, exist_ok=True)
+    (prompts / "atdd.md").write_text("ATDD {{story_id}}\n", encoding="utf-8")
+    schema = {
+        "requiredKeys": ["status", "summary", "next_action"],
+        "schema": {
+            "status": "SUCCESS|FAILURE|AMBIGUOUS",
+            "summary": "brief description",
+            "next_action": "proceed|retry",
+        },
+    }
+    (parse / "atdd.json").write_text(json.dumps(schema), encoding="utf-8")
+
+
+def _tea_steps_override(project_root: Path) -> dict[str, object]:
+    return {
+        "atdd": {
+            "label": "atdd",
+            "assets": {
+                "skillName": "bmad-tea-testarch-atdd",
+                "workflowCandidates": ["workflow.md", "workflow.yaml"],
+                "instructionsCandidates": [],
+                "checklistCandidates": ["checklist.md"],
+                "templateCandidates": [],
+                "required": ["skill"],
+            },
+            "prompt": {"templateFile": "_bmad/tea/story-automator/prompts/atdd.md", "interactionMode": "autonomous"},
+            "parse": {"schemaFile": "_bmad/tea/story-automator/parse/atdd.json"},
+            "success": {"verifier": "session_exit"},
+        }
+    }
 
 
 if __name__ == "__main__":

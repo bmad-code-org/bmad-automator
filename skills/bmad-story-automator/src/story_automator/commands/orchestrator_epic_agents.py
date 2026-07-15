@@ -6,6 +6,7 @@ from pathlib import Path
 
 from story_automator.core.artifact_paths import implementation_artifacts_dir
 from story_automator.core.frontmatter import extract_frontmatter, find_frontmatter_value, parse_frontmatter
+from story_automator.core.runtime_policy import PolicyError, load_policy_shape_for_state, story_task_sequence
 from story_automator.core.runtime_layout import runtime_provider
 from story_automator.core.sprint import sprint_status_epic
 from story_automator.core.story_keys import StoryKey, normalize_story_key, normalize_story_key_for_epic
@@ -138,11 +139,17 @@ def agents_build_action(args: list[str]) -> int:
     config = parse_agent_config(options["config-json"])
     complexity = json.loads(read_text(options["complexity-file"]))
     state_fields = parse_frontmatter(read_text(options["state-file"]))
+    try:
+        policy = load_policy_shape_for_state(options["state-file"])
+        tasks_in_scope = story_task_sequence(policy)
+    except PolicyError as exc:
+        print_json({"ok": False, "error": "policy_invalid", "reason": str(exc)})
+        return 1
     stories = []
     for story in complexity.get("stories", []):
         level = str(story.get("complexity", {}).get("level", "medium")).lower() or "medium"
         tasks = {}
-        for task in ("create", "dev", "auto", "review"):
+        for task in tasks_in_scope:
             primary, fallback, model = resolve_agent(config, level, task)
             entry = {
                 "primary": primary,

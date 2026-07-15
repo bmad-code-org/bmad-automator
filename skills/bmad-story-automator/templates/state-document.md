@@ -80,6 +80,8 @@ completedSessions: []
 **Custom Instructions:**
 {{customInstructions}}
 
+{{teaConfigurationBlock}}
+
 ---
 
 ## Story Progress

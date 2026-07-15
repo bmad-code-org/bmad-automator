@@ -2,19 +2,16 @@ from __future__ import annotations
 
 import io
 import json
-import shutil
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
-from story_automator.commands.orchestrator_epic_agents import parse_agent_config
 from story_automator.commands.orchestrator import cmd_orchestrator_helper
+from story_automator.commands.orchestrator_epic_agents import parse_agent_config
 from story_automator.commands.state import cmd_build_state_doc, cmd_validate_state
 from story_automator.commands.tmux import _build_cmd, cmd_tmux_wrapper
-
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
+from tests.tea_test_support import install_bundle, install_required_skills, patch_env
 
 
 class StatePolicyMetadataTests(unittest.TestCase):
@@ -22,8 +19,8 @@ class StatePolicyMetadataTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.project_root = Path(self.tmp.name)
         self.output_dir = self.project_root / "_bmad-output" / "story-automator"
-        self._install_bundle()
-        self._install_required_skills()
+        install_bundle(self.project_root)
+        install_required_skills(self.project_root)
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -33,14 +30,7 @@ class StatePolicyMetadataTests(unittest.TestCase):
         template = self.project_root / ".claude" / "skills" / "bmad-story-automator" / "templates" / "state-document.md"
         with patch_env(self.project_root), redirect_stdout(stdout):
             code = cmd_build_state_doc(
-                [
-                    "--template",
-                    str(template),
-                    "--output-folder",
-                    str(self.output_dir),
-                    "--config-json",
-                    json.dumps(self._config()),
-                ]
+                ["--template", str(template), "--output-folder", str(self.output_dir), "--config-json", json.dumps(self._config())]
             )
         self.assertEqual(code, 0)
         state_file = Path(json.loads(stdout.getvalue())["path"])
@@ -78,14 +68,7 @@ class StatePolicyMetadataTests(unittest.TestCase):
         config["agentConfig"] = {"defaultPrimary": "auto", "defaultFallback": False}
         with patch_env(self.project_root), redirect_stdout(stdout):
             code = cmd_build_state_doc(
-                [
-                    "--template",
-                    str(template),
-                    "--output-folder",
-                    str(self.output_dir),
-                    "--config-json",
-                    json.dumps(config),
-                ]
+                ["--template", str(template), "--output-folder", str(self.output_dir), "--config-json", json.dumps(config)]
             )
         self.assertEqual(code, 0)
         state_file = Path(json.loads(stdout.getvalue())["path"])
@@ -187,10 +170,7 @@ class StatePolicyMetadataTests(unittest.TestCase):
 
     def test_summary_clears_contradictory_snapshot_metadata(self) -> None:
         state_file = self.project_root / "orchestration.md"
-        state_file.write_text(
-            "---\npolicySnapshotFile: \"snap.json\"\npolicySnapshotHash: \"deadbeef\"\nlegacyPolicy: true\n---\n",
-            encoding="utf-8",
-        )
+        state_file.write_text("---\npolicySnapshotFile: \"snap.json\"\npolicySnapshotHash: \"deadbeef\"\nlegacyPolicy: true\n---\n", encoding="utf-8")
         stdout = io.StringIO()
         with patch_env(self.project_root), redirect_stdout(stdout):
             code = cmd_orchestrator_helper(["state-summary", str(state_file)])
@@ -203,10 +183,7 @@ class StatePolicyMetadataTests(unittest.TestCase):
 
     def test_summary_clears_incomplete_snapshot_metadata(self) -> None:
         state_file = self.project_root / "orchestration.md"
-        state_file.write_text(
-            "---\npolicySnapshotFile: \"snap.json\"\n---\n",
-            encoding="utf-8",
-        )
+        state_file.write_text("---\npolicySnapshotFile: \"snap.json\"\n---\n", encoding="utf-8")
         stdout = io.StringIO()
         with patch_env(self.project_root), redirect_stdout(stdout):
             code = cmd_orchestrator_helper(["state-summary", str(state_file)])
@@ -219,10 +196,7 @@ class StatePolicyMetadataTests(unittest.TestCase):
 
     def test_summary_reports_missing_snapshot_reference(self) -> None:
         state_file = self.project_root / "orchestration.md"
-        state_file.write_text(
-            "---\npolicySnapshotFile: \"missing.json\"\npolicySnapshotHash: \"deadbeef\"\n---\n",
-            encoding="utf-8",
-        )
+        state_file.write_text("---\npolicySnapshotFile: \"missing.json\"\npolicySnapshotHash: \"deadbeef\"\n---\n", encoding="utf-8")
         stdout = io.StringIO()
         with patch_env(self.project_root), redirect_stdout(stdout):
             code = cmd_orchestrator_helper(["state-summary", str(state_file)])
@@ -236,10 +210,7 @@ class StatePolicyMetadataTests(unittest.TestCase):
         state_file = self._build_state()
         lines = []
         for line in state_file.read_text(encoding="utf-8").splitlines():
-            if line.startswith("policySnapshotHash: "):
-                lines.append('policySnapshotHash: "deadbeef"')
-            else:
-                lines.append(line)
+            lines.append('policySnapshotHash: "deadbeef"' if line.startswith("policySnapshotHash: ") else line)
         state_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
         stdout = io.StringIO()
         with patch_env(self.project_root), redirect_stdout(stdout):
@@ -256,10 +227,7 @@ class StatePolicyMetadataTests(unittest.TestCase):
         shadow = outside / "snap.json"
         shadow.write_text("{}", encoding="utf-8")
         state_file = outside / "orchestration.md"
-        state_file.write_text(
-            "---\npolicySnapshotFile: \"snap.json\"\npolicySnapshotHash: \"99999999\"\n---\n",
-            encoding="utf-8",
-        )
+        state_file.write_text("---\npolicySnapshotFile: \"snap.json\"\npolicySnapshotHash: \"99999999\"\n---\n", encoding="utf-8")
         stdout = io.StringIO()
         with patch_env(self.project_root), redirect_stdout(stdout):
             code = cmd_orchestrator_helper(["state-summary", str(state_file)])
@@ -285,10 +253,7 @@ class StatePolicyMetadataTests(unittest.TestCase):
 
     def test_escalate_returns_json_when_state_snapshot_is_invalid(self) -> None:
         state_file = self.project_root / "orchestration.md"
-        state_file.write_text(
-            "---\npolicySnapshotFile: \"missing.json\"\npolicySnapshotHash: \"deadbeef\"\n---\n",
-            encoding="utf-8",
-        )
+        state_file.write_text("---\npolicySnapshotFile: \"missing.json\"\npolicySnapshotHash: \"deadbeef\"\n---\n", encoding="utf-8")
         stdout = io.StringIO()
         with patch_env(self.project_root), redirect_stdout(stdout):
             code = cmd_orchestrator_helper(["escalate", "review-loop", "cycles=1", "--state-file", str(state_file)])
@@ -361,39 +326,27 @@ class StatePolicyMetadataTests(unittest.TestCase):
     def test_parse_agent_config_ignores_null_per_task(self) -> None:
         config = parse_agent_config(
             json.dumps(
-                {
-                    "defaultPrimary": "codex",
-                    "defaultFallback": "claude",
-                    "perTask": None,
-                    "retro": {"primary": "claude", "fallback": False},
-                }
+                {"defaultPrimary": "codex", "defaultFallback": "claude", "perTask": None, "retro": {"primary": "claude", "fallback": False}}
             )
         )
-
         self.assertEqual(config["perTask"]["retro"]["primary"], "claude")
         self.assertEqual(config["perTask"]["retro"]["fallback"], False)
 
     def test_parse_agent_config_disables_fallback_when_missing(self) -> None:
         config = parse_agent_config(json.dumps({}))
-
         self.assertEqual(config["defaultFallback"], "false")
 
     def test_parse_agent_config_disables_fallback_for_primary_only(self) -> None:
         config = parse_agent_config(json.dumps({"defaultPrimary": "claude"}))
-
         self.assertEqual(config["defaultFallback"], "false")
 
     def test_parse_agent_config_keeps_explicit_disabled_fallback(self) -> None:
         config = parse_agent_config(json.dumps({"defaultPrimary": "claude", "defaultFallback": False}))
-
         self.assertEqual(config["defaultFallback"], "false")
 
     def test_retro_agent_inherits_default_primary_when_unset(self) -> None:
         state_file = self.project_root / "retro-default-state.md"
-        state_file.write_text(
-            "---\nagentConfig:\n  defaultPrimary: \"codex\"\n  defaultFallback: \"claude\"\n---\n",
-            encoding="utf-8",
-        )
+        state_file.write_text("---\nagentConfig:\n  defaultPrimary: \"codex\"\n  defaultFallback: \"claude\"\n---\n", encoding="utf-8")
         stdout = io.StringIO()
         with patch_env(self.project_root), redirect_stdout(stdout):
             code = cmd_orchestrator_helper(["retro-agent", "--state-file", str(state_file)])
@@ -405,12 +358,10 @@ class StatePolicyMetadataTests(unittest.TestCase):
 
     def test_build_state_doc_coerces_null_default_fallback_to_false(self) -> None:
         state_file = self._build_state({"agentConfig": {"defaultPrimary": "codex", "defaultFallback": None}})
-
         self.assertIn("defaultFallback: false", state_file.read_text(encoding="utf-8"))
 
     def test_build_state_doc_coerces_null_default_primary_to_auto(self) -> None:
         state_file = self._build_state({"agentConfig": {"defaultPrimary": None, "defaultFallback": False}})
-
         self.assertIn('defaultPrimary: "auto"', state_file.read_text(encoding="utf-8"))
 
     def test_build_cmd_returns_exit_code_one_when_prompt_template_becomes_directory(self) -> None:
@@ -440,22 +391,12 @@ class StatePolicyMetadataTests(unittest.TestCase):
     def test_build_state_doc_returns_json_on_policy_snapshot_failure(self) -> None:
         override_dir = self.project_root / "_bmad" / "bmm"
         override_dir.mkdir(parents=True, exist_ok=True)
-        (override_dir / "story-automator.policy.json").write_text(
-            json.dumps({"snapshot": {"relativeDir": "../outside"}}),
-            encoding="utf-8",
-        )
+        (override_dir / "story-automator.policy.json").write_text(json.dumps({"snapshot": {"relativeDir": "../outside"}}), encoding="utf-8")
         stdout = io.StringIO()
         template = self.project_root / ".claude" / "skills" / "bmad-story-automator" / "templates" / "state-document.md"
         with patch_env(self.project_root), redirect_stdout(stdout):
             code = cmd_build_state_doc(
-                [
-                    "--template",
-                    str(template),
-                    "--output-folder",
-                    str(self.output_dir),
-                    "--config-json",
-                    json.dumps(self._config()),
-                ]
+                ["--template", str(template), "--output-folder", str(self.output_dir), "--config-json", json.dumps(self._config())]
             )
         self.assertEqual(code, 1)
         payload = json.loads(stdout.getvalue())
@@ -486,14 +427,7 @@ class StatePolicyMetadataTests(unittest.TestCase):
             config.update(overrides)
         with patch_env(self.project_root), redirect_stdout(stdout):
             cmd_build_state_doc(
-                [
-                    "--template",
-                    str(template),
-                    "--output-folder",
-                    str(self.output_dir),
-                    "--config-json",
-                    json.dumps(config),
-                ]
+                ["--template", str(template), "--output-folder", str(self.output_dir), "--config-json", json.dumps(config)]
             )
         return Path(json.loads(stdout.getvalue())["path"])
 
@@ -505,51 +439,6 @@ class StatePolicyMetadataTests(unittest.TestCase):
             "status": "READY",
             "aiCommand": "claude --dangerously-skip-permissions",
         }
-
-    def _install_bundle(self) -> None:
-        source_skill = REPO_ROOT / "skills" / "bmad-story-automator"
-        source_review = REPO_ROOT / "skills" / "bmad-story-automator-review"
-        target_root = self.project_root / ".claude" / "skills"
-        target_root.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(source_skill, target_root / "bmad-story-automator")
-        shutil.copytree(source_review, target_root / "bmad-story-automator-review")
-
-    def _install_required_skills(self) -> None:
-        for name in ("bmad-create-story", "bmad-dev-story", "bmad-retrospective", "bmad-qa-generate-e2e-tests"):
-            skill_dir = self.project_root / ".claude" / "skills" / name
-            skill_dir.mkdir(parents=True, exist_ok=True)
-            (skill_dir / "SKILL.md").write_text(f"# {name}\n", encoding="utf-8")
-            (skill_dir / "workflow.md").write_text(f"# {name}\n", encoding="utf-8")
-        (self.project_root / ".claude" / "skills" / "bmad-create-story" / "discover-inputs.md").write_text("# discover\n", encoding="utf-8")
-        (self.project_root / ".claude" / "skills" / "bmad-create-story" / "checklist.md").write_text("# checklist\n", encoding="utf-8")
-        (self.project_root / ".claude" / "skills" / "bmad-create-story" / "template.md").write_text("# template\n", encoding="utf-8")
-        (self.project_root / ".claude" / "skills" / "bmad-dev-story" / "checklist.md").write_text("# checklist\n", encoding="utf-8")
-        (self.project_root / ".claude" / "skills" / "bmad-qa-generate-e2e-tests" / "checklist.md").write_text("# checklist\n", encoding="utf-8")
-
-
-class patch_env:
-    def __init__(self, project_root: Path, extra: dict[str, str] | None = None) -> None:
-        self.project_root = str(project_root)
-        self.extra = extra or {}
-        self.previous: dict[str, str | None] = {}
-
-    def __enter__(self) -> None:
-        import os
-
-        self.previous["PROJECT_ROOT"] = os.environ.get("PROJECT_ROOT")
-        os.environ["PROJECT_ROOT"] = self.project_root
-        for key, value in self.extra.items():
-            self.previous[key] = os.environ.get(key)
-            os.environ[key] = value
-
-    def __exit__(self, exc_type, exc, tb) -> None:
-        import os
-
-        for key, value in self.previous.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
 
 
 if __name__ == "__main__":

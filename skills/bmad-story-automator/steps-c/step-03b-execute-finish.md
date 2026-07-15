@@ -27,8 +27,10 @@ ok=$(echo "$commit" | jq -r '.ok')
 - If `ok == true`:
   ```bash
   # Update Story Progress: mark git-commit done
-  tmp_state=$(mktemp)
-  sed "s/^| ${story_id} |.*$/| ${story_id} | done | done | done | done | done | in-progress |/" "{outputFile}" > "$tmp_state" && mv "$tmp_state" "{outputFile}"
+  "{scriptsDir}" orchestrator-helper state-progress "{outputFile}" \
+    --story "${story_id}" \
+    --set git-commit=done \
+    --set status=in-progress
   ```
   → proceed to F
 - If `ok == false` → log warning and escalate
@@ -60,8 +62,9 @@ Display: "**✅ Story {N} complete.**"
 echo "- **[$(date -u +%Y-%m-%dT%H:%M:%SZ)]** Story {story_id}: ✅ complete (commit + sprint-status verified)" >> "{outputFile}"
 
 # Update Story Progress: mark story done
-tmp_state=$(mktemp)
-sed "s/^| ${story_id} |.*$/| ${story_id} | done | done | done | done | done | done |/" "{outputFile}" > "$tmp_state" && mv "$tmp_state" "{outputFile}"
+"{scriptsDir}" orchestrator-helper state-progress "{outputFile}" \
+  --story "${story_id}" \
+  --set status=done
 ```
 Display: `[story {N}/{total}] finalize -> done`
 
@@ -108,12 +111,21 @@ fi
 wait "$epic_status_pid"
 epic_status=$(cat "$tmp_epic_status")
 rm -f "$tmp_epic_status"
+policy_sequence=$("{scriptsDir}" orchestrator-helper policy-sequence --state-file "{outputFile}")
+if ! echo "$policy_sequence" | jq -e '.ok == true' >/dev/null; then
+    echo "Pinned workflow sequence unavailable; cannot evaluate retrospective scope."
+    exit 1
+fi
+policy_has_retro=false
+if echo "$policy_sequence" | jq -e '.sequence | index("retro")' >/dev/null; then
+    policy_has_retro=true
+fi
 
 epic_complete=$(echo "$epic_status" | jq -r '.allStoriesDone')
 epic_ok=$(echo "$epic_status" | jq -r '.ok')
 
 # Both checks must pass
-if [ "$all_done" = "true" ] && [ "$epic_ok" = "true" ] && [ "$epic_complete" = "true" ]; then
+if [ "$policy_has_retro" = "true" ] && [ "$all_done" = "true" ] && [ "$epic_ok" = "true" ] && [ "$epic_complete" = "true" ]; then
     trigger_retro=true
 else
     trigger_retro=false

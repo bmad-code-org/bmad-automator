@@ -42,6 +42,57 @@ Enter choices (e.g., `N 1` or `Y 3`):
 
 Store responses as `skip_automate` (true/false) and `max_parallel` (integer).
 
+### 1b. Detect TEA Support (Optional)
+
+Run TEA detection before offering any TEA-specific configuration:
+
+```bash
+tea_detect=$("{buildStateDoc}" detect-workflow-track)
+tea_recommended=$(echo "$tea_detect" | jq -r '.recommendedTrack')
+tea_prompt=$(echo "$tea_detect" | jq -r '.prompt')
+tea_capable=$(echo "$tea_detect" | jq -r '.teaCapable')
+```
+
+If the current runtime is not a POSIX shell, translate this command and JSON parsing flow to the native shell or scripting environment in use (for example PowerShell on Windows) while preserving the same logic.
+
+If `tea_recommended == "tea"` and `tea_capable == "true"`:
+
+```text
+Detected TEA support for this project. Enable TEA automation for this run? [y/N]
+```
+
+**Wait.**
+
+- If `y`: set `workflow_track=tea`
+- Otherwise: set `workflow_track=standard`
+
+If TEA is not recommended or not capable:
+- set `workflow_track=standard`
+- if `tea_detect.reasons` contains missing-skill or missing-asset warnings, display them once and continue in standard mode
+
+### 1c. Configure TEA Options (Only When Explicitly Enabling TEA)
+
+Only if the user explicitly chooses the TEA track for this run, collect TEA-specific choices separately. Do not change the standard-path interaction contract above.
+
+For the TEA track, state clearly:
+- **Mandatory automated TEA core:** `atdd`, `test_automate`, `test_review`, `trace`
+- **Optional automated TEA add-on:** `nfr`
+- **Optional epic-level add-on:** `retro`
+- `validate-create-story` remains advisory only and is not automated in v1
+- `checkpoint-preview` is out of scope for story-automator and must not be modeled as an in-run checkpoint
+- legacy `qa-generate-e2e-tests` is not added on the TEA track because `test_automate` supersedes it
+
+Collect:
+- `selected_optional_steps` = JSON array string containing zero or more of `retro`, `nfr`
+  - examples: `[]`, `["retro"]`, `["nfr","retro"]`
+- `workflow_track` = `tea`
+
+If `validate-create-story` is referenced elsewhere while `workflow_track == tea`, treat it as advisory only: do not add it to `selected_optional_steps`, and do not expect any automated action from story-automator in v1.
+
+If TEA is not explicitly enabled:
+- `workflow_track` = `standard`
+- `selected_optional_steps` = `[]`
+
 ### 2. Configure Agent (Complexity-Aware)
 
 Using the complexity data from `stories_json`, present agent configuration options that reference the actual complexity breakdown.
@@ -103,6 +154,11 @@ Display configuration summary:
 - Agent configuration
 - Execution settings
 
+Only for the TEA track, add a separate TEA summary block:
+- Mandatory TEA core
+- Selected optional automated steps
+- Advisory ignored items, if any
+
 Pause for confirmation before starting execution.
 
 ### 3b. Confirm Autonomous Start (Optional Checkpoint)
@@ -140,9 +196,11 @@ config_json=$(jq -n \
   --arg currentStep "preflight" \
   --arg aiCommand "$agent_cmd" \
   --arg customInstructions "$custom_instructions" \
+  --arg workflowTrack "$workflow_track" \
+  --argjson selectedOptionalSteps "$selected_optional_steps" \
   --argjson overrides "{\"skipAutomate\":$skip_automate,\"maxParallel\":$max_parallel}" \
   --argjson agentConfig "$agent_config_json" \
-  '{epic:$epic,epicName:$epicName,storyRange:$storyRange,status:$status,currentStory:null,currentStep:$currentStep,aiCommand:$aiCommand,customInstructions:$customInstructions,overrides:$overrides,agentConfig:$agentConfig}'
+  '{epic:$epic,epicName:$epicName,storyRange:$storyRange,status:$status,currentStory:null,currentStep:$currentStep,aiCommand:$aiCommand,customInstructions:$customInstructions,workflowTrack:$workflowTrack,selectedOptionalSteps:$selectedOptionalSteps,overrides:$overrides,agentConfig:$agentConfig}'
 )
 
 state_result=$("{buildStateDoc}" build-state-doc --template "{stateTemplate}" --output-folder "{outputFolder}" --config-json "$config_json")

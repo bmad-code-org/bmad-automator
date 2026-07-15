@@ -6,9 +6,13 @@ from pathlib import Path
 from typing import Any
 
 from ..core.frontmatter import extract_frontmatter, parse_simple_frontmatter
+from ..core.policy_state_rendering import policy_frontmatter_block, policy_summary_block
 from ..core.runtime_policy import PolicyError, load_policy_for_state, snapshot_effective_policy
 from ..core.agent_config import normalize_model as _model_or_none
+from ..core.state_document import progress_metrics, progress_table_lines
+from ..core.tea_policy import build_run_policy, detect_workflow_track
 from ..core.utils import count_matches, ensure_dir, file_exists, get_project_root, now_utc, now_utc_z, read_text, write_json
+from ..core.workflow_steps import selected_optional_steps_from_sequence, workflow_track_for_sequence
 
 
 def cmd_build_state_doc(args: list[str]) -> int:
@@ -29,14 +33,37 @@ def cmd_build_state_doc(args: list[str]) -> int:
         write_json({"ok": False, "error": "missing_template_or_output"})
         return 1
     if config_file and file_exists(config_file):
-        config_json = read_text(config_file)
+        try:
+            config_json = read_text(config_file)
+        except OSError:
+            write_json({"ok": False, "error": "config_file_unreadable"})
+            return 1
     if not config_json.strip():
         write_json({"ok": False, "error": "missing_config"})
         return 1
     try:
         config = json.loads(config_json)
     except json.JSONDecodeError:
-        write_json({"ok": False, "error": "missing_config"})
+        write_json({"ok": False, "error": "invalid_config_json"})
+        return 1
+    if not isinstance(config, dict):
+        write_json({"ok": False, "error": "config_must_be_object"})
+        return 1
+    raw_story_range = config.get("storyRange", [])
+    if raw_story_range is not None and not isinstance(raw_story_range, list):
+        write_json({"ok": False, "error": "storyRange_must_be_array"})
+        return 1
+    if raw_story_range and any(not isinstance(item, str) for item in raw_story_range):
+        write_json({"ok": False, "error": "storyRange_must_be_array_of_strings"})
+        return 1
+    story_range = list(raw_story_range or [])
+    duplicate_story_ids = sorted({item for item in story_range if story_range.count(item) > 1})
+    if duplicate_story_ids:
+        write_json({"ok": False, "error": "storyRange_contains_duplicates", "duplicates": duplicate_story_ids})
+        return 1
+    invalid_story_ids = sorted({item for item in story_range if any(ch in item for ch in ("|", "\n", "\r"))})
+    if invalid_story_ids:
+        write_json({"ok": False, "error": "storyRange_contains_invalid_ids", "invalid": invalid_story_ids})
         return 1
     ensure_dir(output_folder)
     now = now_utc_z()
@@ -45,15 +72,20 @@ def cmd_build_state_doc(args: list[str]) -> int:
     safe_epic = re.sub(r"[^a-zA-Z0-9]+", "-", epic).strip("-") or "epic"
     output_path = Path(output_folder) / f"orchestration-{safe_epic}-{stamp}.md"
     try:
-        snapshot = snapshot_effective_policy(get_project_root())
+        policy_selection = build_run_policy(Path(get_project_root()), config)
+        snapshot = snapshot_effective_policy(get_project_root(), inline_override=policy_selection["policyOverride"])
     except (FileNotFoundError, PolicyError, ValueError) as exc:
         write_json({"ok": False, "error": "policy_snapshot_failed", "reason": str(exc)})
         return 1
+    pinned_sequence = [step for step in ((snapshot["policy"].get("workflow") or {}).get("sequence") or []) if isinstance(step, str)]
+    pinned_track = workflow_track_for_sequence(pinned_sequence)
+    pinned_optional_steps = selected_optional_steps_from_sequence(pinned_sequence)
+    progress_header, progress_divider, progress_rows = progress_table_lines(snapshot["policy"], story_range)
     text = read_text(template)
     replacements: dict[str, Any] = {
         "epic": config.get("epic", ""),
         "epicName": config.get("epicName", ""),
-        "storyRange": config.get("storyRange", []),
+        "storyRange": story_range,
         "status": config.get("status", "READY"),
         "currentStory": config.get("currentStory"),
         "currentStep": config.get("currentStep"),
@@ -78,6 +110,14 @@ def cmd_build_state_doc(args: list[str]) -> int:
     )
     custom_instructions = json.dumps(config.get("customInstructions", ""))
     text = re.sub(r"(?m)^customInstructions:.*$", lambda m: f"customInstructions: {custom_instructions}", text)
+    policy_frontmatter = policy_frontmatter_block(
+        pinned_track,
+        pinned_optional_steps,
+        policy_selection["manualCheckpoints"],
+        policy_selection["notes"],
+    )
+    if policy_frontmatter:
+        text = text.replace("customInstructions: " + custom_instructions + "\n", "customInstructions: " + custom_instructions + "\n" + policy_frontmatter)
     agent_config = config.get("agentConfig")
     if isinstance(agent_config, dict):
         per_task = agent_config.get("perTask", {})
@@ -152,8 +192,6 @@ def cmd_build_state_doc(args: list[str]) -> int:
         text = re.sub(r"(?m)^agentConfig:\n(?:(?:\s{2}.*\n)*)", block, text)
     for key, value in replacements.items():
         text = re.sub(rf"(?m)^{re.escape(key)}:.*$", lambda m, k=key, v=value: f"{k}: {json.dumps(v)}", text)
-    story_range = [item for item in config.get("storyRange", []) if isinstance(item, str)]
-    progress_rows = "\n".join(f"| {story_id} | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | pending |" for story_id in story_range)
     body = {
         "{{epicName}}": str(config.get("epicName", "")),
         "{{epic}}": str(config.get("epic", "")),
@@ -163,11 +201,84 @@ def cmd_build_state_doc(args: list[str]) -> int:
         "{{overrides.maxParallel}}": str(int(overrides.get("maxParallel", 1) or 1)),
         "{{customInstructions}}": str(config.get("customInstructions", "")),
     }
+    body["{{teaConfigurationBlock}}"] = policy_summary_block(
+        pinned_track,
+        pinned_sequence,
+        pinned_optional_steps,
+        policy_selection["notes"],
+    )
     for key, value in body.items():
         text = text.replace(key, value)
+    text = text.replace("| Story | create-story | dev-story | automate | code-review | git-commit | Status |", progress_header)
+    text = text.replace("|-------|--------------|-----------|----------|-------------|------------|--------|", progress_divider)
     text = text.replace("<!-- Progress rows will be appended here -->", progress_rows)
     output_path.write_text(text)
     write_json({"ok": True, "path": str(output_path), "createdAt": now})
+    return 0
+
+
+def cmd_build_run_policy(args: list[str]) -> int:
+    config_file = ""
+    config_json = ""
+    for idx, arg in enumerate(args):
+        if arg == "--config-file" and idx + 1 < len(args):
+            config_file = args[idx + 1]
+        elif arg == "--config-json" and idx + 1 < len(args):
+            config_json = args[idx + 1]
+    if config_file and file_exists(config_file):
+        try:
+            config_json = read_text(config_file)
+        except OSError:
+            write_json({"ok": False, "error": "config_file_unreadable"})
+            return 1
+    if not config_json.strip():
+        write_json({"ok": False, "error": "missing_config"})
+        return 1
+    try:
+        config = json.loads(config_json)
+    except json.JSONDecodeError:
+        write_json({"ok": False, "error": "invalid_config_json"})
+        return 1
+    if not isinstance(config, dict):
+        write_json({"ok": False, "error": "config_must_be_object"})
+        return 1
+    try:
+        selection = build_run_policy(Path(get_project_root()), config)
+    except (FileNotFoundError, PolicyError, ValueError) as exc:
+        write_json({"ok": False, "error": "policy_invalid", "reason": str(exc)})
+        return 1
+    shape_error = _run_policy_selection_error(selection)
+    if shape_error:
+        write_json({"ok": False, "error": "policy_selection_invalid", "reason": shape_error})
+        return 1
+    write_json({"ok": True, **selection})
+    return 0
+
+
+def _run_policy_selection_error(selection: object) -> str:
+    if not isinstance(selection, dict):
+        return "selection must be an object"
+    required = {"policyOverride", "workflowTrack", "selectedOptionalSteps", "manualCheckpoints", "notes"}
+    missing = sorted(required - set(selection))
+    if missing:
+        return f"missing selection keys: {', '.join(missing)}"
+    if not isinstance(selection["policyOverride"], dict):
+        return "policyOverride must be an object"
+    if selection["workflowTrack"] not in {"standard", "tea"}:
+        return "workflowTrack must be standard or tea"
+    for key in ("selectedOptionalSteps", "manualCheckpoints", "notes"):
+        value = selection[key]
+        if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+            return f"{key} must be a string array"
+    return ""
+
+
+def cmd_detect_workflow_track(args: list[str]) -> int:
+    project_root = Path(get_project_root())
+    for idx, arg in enumerate(args):
+        if arg == "--project-root" and idx + 1 < len(args):
+            project_root = Path(args[idx + 1]).expanduser().resolve()
+    write_json(detect_workflow_track(project_root))
     return 0
 
 
@@ -209,30 +320,13 @@ def cmd_state_metrics(args: list[str]) -> int:
     if not state or not file_exists(state):
         write_json({"ok": False, "error": "state_not_found"})
         return 1
-    total = 0
-    completed = 0
-    in_table = False
-    for line in read_text(state).splitlines():
-        if line.startswith("| Story "):
-            in_table = True
-            continue
-        if in_table and re.match(r"^\|[- ]*\|", line):
-            continue
-        if in_table and line.startswith("|"):
-            parts = [part.strip() for part in line.split("|")]
-            if len(parts) >= 8 and parts[1]:
-                total += 1
-                if any(token in parts[7].lower() for token in ("done", "complete", "completed")):
-                    completed += 1
-            continue
-        if in_table and not line.startswith("|"):
-            in_table = False
+    metrics = progress_metrics(read_text(state))
     print(
         json.dumps(
             {
                 "ok": True,
-                "storiesCompleted": completed,
-                "total": total,
+                "storiesCompleted": metrics["storiesCompleted"],
+                "total": metrics["total"],
                 "reviewCycles": count_matches(read_text(state), r"review cycle|code review cycle"),
                 "escalations": count_matches(read_text(state), r"escalation|escalated"),
             },

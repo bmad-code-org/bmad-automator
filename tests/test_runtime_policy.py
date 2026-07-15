@@ -10,10 +10,12 @@ from unittest.mock import patch
 from story_automator.core.runtime_policy import (
     PolicyError,
     load_effective_policy,
+    load_policy_shape_for_state,
     load_policy_snapshot,
     load_runtime_policy,
     snapshot_effective_policy,
 )
+from tests.tea_test_support import install_tea_skills, tea_steps_override
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -45,19 +47,117 @@ class RuntimePolicyTests(unittest.TestCase):
         self.assertEqual(policy["workflow"]["sequence"], ["create", "review"])
         self.assertEqual(policy["steps"]["review"]["prompt"]["defaultExtraInstruction"], "fix critical issues only")
 
+    def test_inline_override_deep_merges_after_project_override(self) -> None:
+        self._write_override({"workflow": {"sequence": ["create", "dev", "review"]}})
+        policy = load_effective_policy(
+            str(self.project_root),
+            inline_override={"workflow": {"repeat": {"review": {"maxCycles": 3}}}},
+        )
+        self.assertEqual(policy["workflow"]["sequence"], ["create", "dev", "review"])
+        self.assertEqual(policy["workflow"]["repeat"]["review"]["maxCycles"], 3)
+
+    def test_inline_override_is_not_mutated_by_policy_resolution(self) -> None:
+        self._install_tea_skills()
+        inline_override = {
+            "workflow": {"sequence": ["create", "atdd", "dev", "test_automate", "test_review", "trace", "review"]},
+            "steps": tea_steps_override(),
+        }
+        load_effective_policy(str(self.project_root), inline_override=inline_override)
+
+        atdd = inline_override["steps"]["atdd"]
+        self.assertNotIn("files", atdd["assets"])
+        self.assertNotIn("templatePath", atdd["prompt"])
+        self.assertNotIn("templateHash", atdd["prompt"])
+        self.assertNotIn("schemaPath", atdd["parse"])
+        self.assertNotIn("schemaHash", atdd["parse"])
+
     def test_invalid_step_name_rejected(self) -> None:
-        self._write_override({"steps": {"ship": {"success": {"verifier": "session_exit"}}}})
+        self._write_override({"workflow": {"sequence": ["create", "ship"]}, "steps": {"ship": {"success": {"verifier": "session_exit"}}}})
         with self.assertRaises(PolicyError):
             load_effective_policy(str(self.project_root))
+
+    def test_policy_sequence_requires_review(self) -> None:
+        self._write_override({"workflow": {"sequence": ["create", "dev"]}})
+        with self.assertRaisesRegex(PolicyError, "workflow.sequence must include review"):
+            load_effective_policy(str(self.project_root))
+
+    def test_duplicate_workflow_sequence_entries_rejected(self) -> None:
+        self._write_override({"workflow": {"sequence": ["create", "dev", "dev", "review"]}})
+        with self.assertRaisesRegex(PolicyError, "workflow.sequence contains duplicate steps: dev"):
+            load_effective_policy(str(self.project_root))
+
+    def test_invalid_unreferenced_step_definition_is_rejected_before_pruning(self) -> None:
+        self._write_override(
+            {
+                "workflow": {"sequence": ["create", "dev", "review"]},
+                "steps": {"typo_step": {"success": {"verifier": "nope"}}},
+            }
+        )
+        with self.assertRaisesRegex(PolicyError, "unknown step names: typo_step"):
+            load_effective_policy(str(self.project_root))
+
+    def test_invalid_unreferenced_known_step_definition_is_rejected_before_pruning(self) -> None:
+        self._write_override(
+            {
+                "workflow": {"sequence": ["create", "dev", "review"]},
+                "steps": {"auto": {"success": {"verifier": "nope"}}},
+            }
+        )
+        with self.assertRaisesRegex(PolicyError, "invalid verifier for auto: nope"):
+            load_effective_policy(str(self.project_root))
+
+    def test_tea_steps_allowed_when_explicitly_configured_and_installed(self) -> None:
+        self._install_tea_skills()
+        steps = tea_steps_override()
+        self._write_override(
+            {
+                "workflow": {"sequence": ["create", "atdd", "dev", "test_automate", "test_review", "trace", "review"]},
+                "steps": steps,
+            }
+        )
+        policy = load_effective_policy(str(self.project_root))
+        self.assertEqual(
+            policy["workflow"]["sequence"],
+            ["create", "atdd", "dev", "test_automate", "test_review", "trace", "review"],
+        )
+        self.assertEqual(policy["steps"]["trace"]["assets"]["skillName"], "bmad-tea-testarch-trace")
 
     def test_invalid_verifier_name_rejected(self) -> None:
         self._write_override({"steps": {"review": {"success": {"verifier": "nope"}}}})
         with self.assertRaises(PolicyError):
             load_effective_policy(str(self.project_root))
 
+    def test_invalid_label_with_markdown_delimiter_rejected(self) -> None:
+        self._write_override({"steps": {"review": {"label": "code|review"}}})
+        with self.assertRaisesRegex(PolicyError, "invalid label for review"):
+            load_effective_policy(str(self.project_root))
+
+    def test_label_collision_with_reserved_progress_column_rejected(self) -> None:
+        self._write_override({"steps": {"review": {"label": "Status"}}})
+        with self.assertRaisesRegex(PolicyError, "step label collides with reserved progress column for review: Status"):
+            load_effective_policy(str(self.project_root))
+
+    def test_label_collision_with_another_progress_column_rejected(self) -> None:
+        self._write_override({"steps": {"review": {"label": "dev-story"}}})
+        with self.assertRaisesRegex(PolicyError, "step label collides with another progress column: review, dev"):
+            load_effective_policy(str(self.project_root))
+
     def test_required_asset_missing_fails(self) -> None:
         shutil.rmtree(self.project_root / ".claude" / "skills" / "bmad-create-story")
         with self.assertRaises(PolicyError):
+            load_effective_policy(str(self.project_root))
+
+    def test_tea_policy_fails_when_required_tea_skill_missing(self) -> None:
+        steps = tea_steps_override()
+        self._write_override(
+            {
+                "workflow": {"sequence": ["create", "atdd", "dev", "review"]},
+                "steps": {
+                    "atdd": steps["atdd"],
+                },
+            }
+        )
+        with self.assertRaisesRegex(PolicyError, "missing required skill asset for atdd"):
             load_effective_policy(str(self.project_root))
 
     def test_dependency_workflow_file_optional(self) -> None:
@@ -102,6 +202,60 @@ class RuntimePolicyTests(unittest.TestCase):
         (override_dir / "story-automator.policy.json").write_text("{bad json", encoding="utf-8")
         with self.assertRaises(PolicyError):
             load_effective_policy(str(self.project_root))
+
+    def test_unreadable_override_file_is_wrapped_as_policy_error(self) -> None:
+        override_dir = self.project_root / "_bmad" / "bmm"
+        override_dir.mkdir(parents=True, exist_ok=True)
+        override_path = (override_dir / "story-automator.policy.json").resolve()
+        override_path.write_text("{}", encoding="utf-8")
+
+        original_read_json = __import__("story_automator.core.runtime_policy", fromlist=["_read_json"])._read_json
+
+        def raising_read_json(path):
+            if Path(path).resolve() == override_path:
+                raise OSError("permission denied")
+            return original_read_json(path)
+
+        with patch("story_automator.core.runtime_policy._read_json", side_effect=raising_read_json):
+            with self.assertRaisesRegex(PolicyError, r"project override unreadable: .*story-automator\.policy\.json"):
+                load_effective_policy(str(self.project_root))
+
+    def test_unreadable_override_probe_is_wrapped_as_policy_error(self) -> None:
+        override_dir = self.project_root / "_bmad" / "bmm"
+        override_dir.mkdir(parents=True, exist_ok=True)
+        override_path = (override_dir / "story-automator.policy.json").resolve()
+        override_path.write_text("{}", encoding="utf-8")
+
+        with patch(
+            "story_automator.core.runtime_policy._path_is_file",
+            side_effect=lambda path: (_ for _ in ()).throw(OSError("permission denied")) if Path(path).resolve() == override_path else Path(path).is_file(),
+        ):
+            with self.assertRaisesRegex(PolicyError, r"project override unreadable: .*story-automator\.policy\.json"):
+                load_effective_policy(str(self.project_root))
+
+    def test_unused_invalid_override_step_breaks_standard_inline_selection(self) -> None:
+        self._write_override(
+            {
+                "workflow": {"sequence": ["create", "atdd", "dev", "review"]},
+                "steps": {"atdd": {"assets": []}},
+            }
+        )
+        with self.assertRaisesRegex(PolicyError, "atdd.assets must be an object"):
+            load_effective_policy(
+                str(self.project_root),
+                inline_override={"workflow": {"sequence": ["create", "dev", "review"]}},
+            )
+
+    def test_bundled_policy_read_failure_is_wrapped_as_policy_error(self) -> None:
+        policy_path = self.project_root / ".claude" / "skills" / "bmad-story-automator" / "data" / "orchestration-policy.json"
+        policy_path.unlink()
+        policy_path.mkdir()
+        with patch(
+            "story_automator.core.runtime_policy.bundled_skill_root",
+            return_value=self.project_root / ".claude" / "skills" / "bmad-story-automator",
+        ):
+            with self.assertRaisesRegex(PolicyError, r"policy unreadable: .*orchestration-policy\.json"):
+                load_effective_policy(str(self.project_root))
 
     def test_invalid_assets_type_rejected(self) -> None:
         self._write_override({"steps": {"review": {"assets": []}}})
@@ -263,6 +417,46 @@ class RuntimePolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(PolicyError, "state file unreadable"):
             load_runtime_policy(str(self.project_root), state_file=str(self.project_root))
 
+    def test_load_policy_shape_for_state_reports_missing_snapshot_precisely(self) -> None:
+        state_file = self.project_root / "orchestration-missing-snapshot.md"
+        state_file.write_text(
+            "---\npolicySnapshotFile: \"missing.json\"\npolicySnapshotHash: \"deadbeef\"\n---\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(PolicyError, r"policy snapshot missing: .*missing\.json"):
+            load_policy_shape_for_state(str(state_file), project_root=str(self.project_root))
+
+    def test_load_policy_shape_for_state_wraps_snapshot_stat_errors(self) -> None:
+        state_file = self.project_root / "orchestration-unreadable-snapshot.md"
+        state_file.write_text(
+            "---\npolicySnapshotFile: \"blocked.json\"\npolicySnapshotHash: \"deadbeef\"\n---\n",
+            encoding="utf-8",
+        )
+        blocked_path = (self.project_root / "blocked.json").resolve()
+        original_is_file = Path.is_file
+
+        def raising_is_file(path: Path) -> bool:
+            if path.resolve() == blocked_path:
+                raise PermissionError("permission denied")
+            return original_is_file(path)
+
+        with patch("pathlib.Path.is_file", autospec=True, side_effect=raising_is_file):
+            with self.assertRaisesRegex(PolicyError, r"policy snapshot unreadable: .*blocked\.json"):
+                load_policy_shape_for_state(str(state_file), project_root=str(self.project_root))
+
+    def test_load_policy_snapshot_wraps_snapshot_stat_errors(self) -> None:
+        blocked_path = (self.project_root / "blocked.json").resolve()
+        original_is_file = Path.is_file
+
+        def raising_is_file(path: Path) -> bool:
+            if path.resolve() == blocked_path:
+                raise PermissionError("permission denied")
+            return original_is_file(path)
+
+        with patch("pathlib.Path.is_file", autospec=True, side_effect=raising_is_file):
+            with self.assertRaisesRegex(PolicyError, r"policy snapshot unreadable: .*blocked\.json"):
+                load_policy_snapshot("blocked.json", project_root=str(self.project_root), expected_hash="deadbeef")
+
     def _install_bundle(self) -> None:
         source_skill = REPO_ROOT / "skills" / "bmad-story-automator"
         source_review = REPO_ROOT / "skills" / "bmad-story-automator-review"
@@ -292,6 +486,9 @@ class RuntimePolicyTests(unittest.TestCase):
         override_dir = self.project_root / "_bmad" / "bmm"
         override_dir.mkdir(parents=True, exist_ok=True)
         (override_dir / "story-automator.policy.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    def _install_tea_skills(self) -> None:
+        install_tea_skills(self.project_root, canonical=False, write_assets=True)
 
 
 if __name__ == "__main__":

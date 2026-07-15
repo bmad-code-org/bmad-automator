@@ -240,6 +240,23 @@ class CoreAgentConfigModelTests(unittest.TestCase):
             result = resolve_agents(agents_file, "9.1", "dev")
             self.assertEqual(result["model"], "")
 
+    def test_build_agents_file_returns_structured_policy_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            state_file = tmp_path / "state.md"
+            state_file.write_text(
+                "---\npolicySnapshotFile: missing.json\npolicySnapshotHash: deadbeef\n---\n",
+                encoding="utf-8",
+            )
+            complexity_file = tmp_path / "complexity.json"
+            complexity_file.write_text(json.dumps({"stories": []}), encoding="utf-8")
+            output = tmp_path / "agents.md"
+            result = build_agents_file(state_file, complexity_file, output, json.dumps({"defaultPrimary": "claude"}))
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["error"], "policy_invalid")
+            self.assertIn("policy snapshot missing:", result["reason"])
+            self.assertTrue(result["reason"].endswith("missing.json"))
+
 
 class OrchestratorEpicAgentsModelTests(unittest.TestCase):
     def test_parse_agent_config_extracts_default_model(self) -> None:
@@ -262,6 +279,39 @@ class OrchestratorEpicAgentsModelTests(unittest.TestCase):
         self.assertEqual((primary, model), ("claude", "claude-sonnet-4-6"))
         _primary, _fallback, model = resolve_agent(config, "medium", "dev")
         self.assertEqual(model, "claude-opus-4-7")
+
+    def test_agents_build_returns_json_for_invalid_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            state_file = tmp_path / "state.md"
+            state_file.write_text(
+                "---\npolicySnapshotFile: missing.json\npolicySnapshotHash: deadbeef\n---\n",
+                encoding="utf-8",
+            )
+            complexity_file = tmp_path / "complexity.json"
+            complexity_file.write_text(json.dumps({"stories": []}), encoding="utf-8")
+            output = tmp_path / "agents.md"
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                code = cmd_orchestrator_helper(
+                    [
+                        "agents-build",
+                        "--state-file",
+                        str(state_file),
+                        "--complexity-file",
+                        str(complexity_file),
+                        "--output",
+                        str(output),
+                        "--config-json",
+                        json.dumps({"defaultPrimary": "claude"}),
+                    ]
+                )
+            self.assertEqual(code, 1)
+            payload = json.loads(stdout.getvalue())
+            self.assertFalse(payload["ok"])
+            self.assertEqual(payload["error"], "policy_invalid")
+            self.assertIn("policy snapshot missing:", payload["reason"])
+            self.assertTrue(payload["reason"].endswith("missing.json"))
 
 
 class StateDocModelSerializationTests(unittest.TestCase):
