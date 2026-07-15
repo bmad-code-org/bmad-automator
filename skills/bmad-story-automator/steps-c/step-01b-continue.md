@@ -209,6 +209,12 @@ marker_entry=$(echo "$marker_info" | jq -r '.entry')
   --project-slug "$project_slug" --pid "$$" --heartbeat "{timestamp}"
 ```
 
+**🚨 BEFORE routing into any execution step, load `../data/monitoring-pattern.md` and
+`../data/execution-patterns.md` into context.** A Stop-hook resume re-enters mid-run with
+none of the execution guidance loaded; without the FORBIDDEN-polling table the orchestrator
+improvises per-turn `cat`/`tmux capture-pane` polling and burns a quota window (issue #29).
+This is mandatory on the resume path, not optional.
+
 **Then** route per Menu Handling Logic in section 5 above.
 
 ---

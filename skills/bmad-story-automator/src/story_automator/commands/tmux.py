@@ -29,6 +29,14 @@ from story_automator.core.utils import (
     project_slug,
 )
 
+# When tmux reports a session "completed" but the workflow verifier still says
+# the artifact isn't there, the pane is often just idle mid-tool-call (a
+# false-complete). Rather than bounce an ``incomplete`` that the orchestrator
+# then hand-polls in fresh LLM turns (issue #29), re-confirm in-process a few
+# times inside the same blocking call before giving up.
+COMPLETION_RECHECKS = 3
+RECHECK_GRACE_SECONDS = 15
+
 
 def cmd_tmux_wrapper(args: list[str]) -> int:
     if not args:
@@ -285,12 +293,13 @@ def cmd_monitor_session(args: list[str]) -> int:
         return 1
     if args[0] in {"--help", "-h"}:
         print("Usage: monitor-session <session_name> [options]")
-        print("Options: --max-polls N --initial-wait N --project-root PATH --timeout MIN --verbose --json --agent TYPE --workflow TYPE --story-key KEY --state-file PATH")
+        print("Options: --max-polls N --initial-wait N --project-root PATH --timeout MIN --completion-rechecks N --verbose --json --agent TYPE --workflow TYPE --story-key KEY --state-file PATH")
         return 0
     session = args[0]
     max_polls = 30
     initial_wait = 5
     timeout_minutes = 60
+    completion_rechecks = COMPLETION_RECHECKS
     json_output = False
     workflow = "dev"
     story_key = ""
@@ -310,6 +319,10 @@ def cmd_monitor_session(args: list[str]) -> int:
             continue
         if arg == "--timeout" and idx + 1 < len(args):
             timeout_minutes = int(args[idx + 1])
+            idx += 2
+            continue
+        if arg == "--completion-rechecks" and idx + 1 < len(args):
+            completion_rechecks = max(0, int(args[idx + 1]))
             idx += 2
             continue
         if arg == "--json":
@@ -346,6 +359,7 @@ def cmd_monitor_session(args: list[str]) -> int:
     start = time.time()
     last_done = 0
     last_total = 0
+    unverified_completions = 0
     for _ in range(1, max_polls + 1):
         if time.time() - start >= timeout_minutes * 60:
             return _emit_monitor(json_output, "timeout", last_done, last_total, "", f"exceeded_{timeout_minutes}m")
@@ -354,6 +368,10 @@ def cmd_monitor_session(args: list[str]) -> int:
             last_done = int(status["todos_done"])
             last_total = int(status["todos_total"])
         state = str(status["session_state"])
+        if state != "completed":
+            # Session is active again (or never idle): any earlier false-complete
+            # is void — reset the recheck counter.
+            unverified_completions = 0
         if state == "completed":
             output = session_status(session, full=True, codex=agent == "codex", project_root=project_root, mode=runtime_mode())["active_task"]
             verification = _verify_monitor_completion(
@@ -376,13 +394,27 @@ def cmd_monitor_session(args: list[str]) -> int:
                         reason,
                         output_verified=bool(verified.get("verified")),
                     )
+                reason = str(verified.get("reason") or "workflow_not_verified")
+                unverified_completions += 1
+                # A broken verifier CONTRACT won't fix itself by waiting — surface
+                # it immediately so the orchestrator escalates. Only re-poll the
+                # genuine false-complete case (pane idle mid-tool-call, artifact
+                # not written yet).
+                if reason != "verifier_contract_invalid" and unverified_completions < completion_rechecks:
+                    # Re-confirm in-process instead of returning an `incomplete`
+                    # the orchestrator would hand-poll. Stays inside this one call.
+                    remaining_time = timeout_minutes * 60 - (time.time() - start)
+                    if remaining_time <= 0:
+                        return _emit_monitor(json_output, "timeout", last_done, last_total, str(output), f"exceeded_{timeout_minutes}m")
+                    time.sleep(min(RECHECK_GRACE_SECONDS, max(1, int(remaining_time))))
+                    continue
                 return _emit_monitor(
                     json_output,
                     "incomplete",
                     last_done,
                     last_total,
                     str(output),
-                    str(verified.get("reason") or "workflow_not_verified"),
+                    reason,
                     output_verified=bool(verified.get("verified")),
                 )
             return _emit_monitor(json_output, "completed", last_done, last_total, str(output), "normal_completion")

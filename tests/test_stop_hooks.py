@@ -595,6 +595,127 @@ class StopHookTests(unittest.TestCase):
         self.assertEqual((codex_dir / "config.toml").read_text(encoding="utf-8"), "[features\n")
         self.assertFalse((codex_dir / "hooks.json").exists())
 
+    # --- Circuit breaker (issue #29) ------------------------------------
+
+    def _stop_hook_marker(self) -> Path:
+        return self.project_root / ".story-automator-active"
+
+    def _write_active_marker(self, **fields: object) -> None:
+        payload: dict[str, object] = {"storiesRemaining": 3}
+        payload.update(fields)
+        self._stop_hook_marker().write_text(json.dumps(payload), encoding="utf-8")
+
+    def _bump_marker(self, **fields: object) -> None:
+        marker = json.loads(self._stop_hook_marker().read_text(encoding="utf-8"))
+        marker.update(fields)
+        self._stop_hook_marker().write_text(json.dumps(marker), encoding="utf-8")
+
+    def _invoke_stop_hook(
+        self,
+        *,
+        stop_hook_active: bool,
+        max_blocks: int | None = None,
+    ) -> tuple[dict[str, object] | None, dict[str, object]]:
+        stdout = io.StringIO()
+        env = {
+            "PROJECT_ROOT": str(self.project_root),
+            "STORY_AUTOMATOR_ACTIVE_MARKER": str(self._stop_hook_marker()),
+        }
+        if max_blocks is not None:
+            env["STORY_AUTOMATOR_MAX_STOP_BLOCKS"] = str(max_blocks)
+        stdin_payload = json.dumps({"stop_hook_active": stop_hook_active})
+        with (
+            patch.dict(os.environ, env, clear=False),
+            patch("story_automator.commands.basic.sys.stdin", io.StringIO(stdin_payload)),
+            patch("os.getcwd", return_value=str(self.project_root)),
+            redirect_stdout(stdout),
+        ):
+            code = cmd_stop_hook([])
+        self.assertEqual(code, 0)
+        raw = stdout.getvalue().strip()
+        parsed = json.loads(raw) if raw else None
+        marker = json.loads(self._stop_hook_marker().read_text(encoding="utf-8"))
+        return parsed, marker
+
+    def test_stop_hook_allows_stop_without_marker(self) -> None:
+        stdout = io.StringIO()
+        env = {
+            "PROJECT_ROOT": str(self.project_root),
+            "STORY_AUTOMATOR_ACTIVE_MARKER": str(self._stop_hook_marker()),
+        }
+        with (
+            patch.dict(os.environ, env, clear=False),
+            patch("story_automator.commands.basic.sys.stdin", io.StringIO("{}")),
+            patch("os.getcwd", return_value=str(self.project_root)),
+            redirect_stdout(stdout),
+        ):
+            code = cmd_stop_hook([])
+        self.assertEqual(code, 0)
+        self.assertEqual(stdout.getvalue().strip(), "")
+
+    def test_stop_hook_blocks_when_stories_remain(self) -> None:
+        self._write_active_marker(storiesRemaining=2)
+        out, marker = self._invoke_stop_hook(stop_hook_active=False)
+        assert out is not None
+        self.assertEqual(out["decision"], "block")
+        self.assertIn("2 stories remaining", out["reason"])
+        self.assertEqual(marker["stopHookBlocks"], 0)
+
+    def test_stop_hook_circuit_breaker_releases_after_cap(self) -> None:
+        self._write_active_marker(storiesRemaining=2)
+        out1, marker1 = self._invoke_stop_hook(stop_hook_active=True, max_blocks=3)
+        assert out1 is not None
+        self.assertEqual(out1["decision"], "block")
+        self.assertEqual(marker1["stopHookBlocks"], 1)
+
+        out2, marker2 = self._invoke_stop_hook(stop_hook_active=True, max_blocks=3)
+        assert out2 is not None
+        self.assertEqual(out2["decision"], "block")
+        self.assertEqual(marker2["stopHookBlocks"], 2)
+
+        out3, marker3 = self._invoke_stop_hook(stop_hook_active=True, max_blocks=3)
+        assert out3 is not None
+        self.assertNotIn("decision", out3)
+        self.assertIn("systemMessage", out3)
+        self.assertIn("circuit breaker", out3["systemMessage"])
+        self.assertEqual(marker3["stopHookBlocks"], 0)
+
+    def test_stop_hook_resets_blocks_on_heartbeat_progress(self) -> None:
+        self._write_active_marker(storiesRemaining=2, heartbeat="t0")
+        # First call establishes the heartbeat baseline (counts as progress).
+        self._invoke_stop_hook(stop_hook_active=True, max_blocks=5)
+        _, marker2 = self._invoke_stop_hook(stop_hook_active=True, max_blocks=5)
+        self.assertEqual(marker2["stopHookBlocks"], 1)
+
+        self._bump_marker(heartbeat="t1")  # orchestrator made real progress
+        out3, marker3 = self._invoke_stop_hook(stop_hook_active=True, max_blocks=5)
+        assert out3 is not None
+        self.assertEqual(out3["decision"], "block")
+        self.assertEqual(marker3["stopHookBlocks"], 0)
+
+    def test_stop_hook_resets_blocks_when_not_stop_hook_active(self) -> None:
+        self._write_active_marker(storiesRemaining=2)
+        self._invoke_stop_hook(stop_hook_active=True, max_blocks=5)
+        _, marker2 = self._invoke_stop_hook(stop_hook_active=True, max_blocks=5)
+        self.assertEqual(marker2["stopHookBlocks"], 2)
+
+        out3, marker3 = self._invoke_stop_hook(stop_hook_active=False, max_blocks=5)
+        assert out3 is not None
+        self.assertEqual(out3["decision"], "block")
+        self.assertEqual(marker3["stopHookBlocks"], 0)
+
+    def test_stop_hook_resets_blocks_when_remaining_decreases(self) -> None:
+        self._write_active_marker(storiesRemaining=3)
+        self._invoke_stop_hook(stop_hook_active=True, max_blocks=5)
+        _, marker2 = self._invoke_stop_hook(stop_hook_active=True, max_blocks=5)
+        self.assertEqual(marker2["stopHookBlocks"], 2)
+
+        self._bump_marker(storiesRemaining=2)  # a story finished
+        out3, marker3 = self._invoke_stop_hook(stop_hook_active=True, max_blocks=5)
+        assert out3 is not None
+        self.assertEqual(out3["decision"], "block")
+        self.assertEqual(marker3["stopHookBlocks"], 0)
+
     def _install_bundle(self, runtime_dir: str) -> None:
         source_skill = REPO_ROOT / "skills" / "bmad-story-automator"
         source_review = REPO_ROOT / "skills" / "bmad-story-automator-review"
