@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .session_state import STATE_SCHEMA_VERSION, load_session_state, load_session_state_diagnostics, serialized_session_state_issue
 from .utils import (
     atomic_write,
     command_exists,
@@ -26,7 +27,6 @@ from .utils import (
 )
 from .runtime_layout import runtime_provider
 
-STATE_SCHEMA_VERSION = 1
 DEFAULT_WIDTH = 200
 DEFAULT_HEIGHT = 50
 REMAIN_ON_EXIT = "on"
@@ -141,20 +141,45 @@ def tmux_list_sessions(project_only: bool) -> tuple[list[str], int]:
         return ([], code)
     sessions = [line.strip() for line in output.splitlines() if line.strip().startswith("sa-")]
     if project_only:
-        prefix = f"sa-{project_slug()}-"
-        sessions = [line for line in sessions if line.startswith(prefix)]
+        sessions = [line for line in sessions if _matches_current_project_session(line)]
     return (sessions, 0)
 
 
-def load_session_state(path: str | Path) -> dict[str, object]:
-    target = Path(path)
-    if not target.exists():
-        return {}
+def _matches_current_project_session(session: str) -> bool:
+    hashed_prefix = f"sa-{project_slug()}-{project_hash()}-"
+    if session.startswith(hashed_prefix):
+        return True
+    legacy_prefix = f"sa-{project_slug()}-"
+    if not session.startswith(legacy_prefix):
+        return False
+    remainder = session[len(legacy_prefix) :]
+    first_segment = remainder.split("-", 1)[0]
+    if re.fullmatch(r"[0-9a-f]{8}", first_segment):
+        return False
     try:
-        raw = json.loads(read_text(target))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return raw if isinstance(raw, dict) else {}
+        paths = session_paths(session)
+    except ValueError:
+        return False
+    if any(path.exists() for path in (paths.state, paths.command, paths.runner, paths.output)):
+        return True
+    return _legacy_session_cwd_matches_current_project(session)
+
+
+def _legacy_session_cwd_matches_current_project(session: str) -> bool:
+    output, code = run_cmd("tmux", "display-message", "-t", session, "-p", "#{pane_current_path}")
+    if code != 0:
+        return False
+    pane_path = output.strip()
+    if not pane_path:
+        return False
+    try:
+        return Path(pane_path).resolve() == Path(get_project_root()).resolve()
+    except OSError:
+        return False
+
+
+def monitor_session_state_issue(session: str, project_root: str) -> object | None:
+    return serialized_session_state_issue(session_paths(session, project_root).state)
 
 
 def save_session_state(path: str | Path, payload: dict[str, object]) -> None:
@@ -511,6 +536,7 @@ def _spawn_legacy(session: str, command: str, selected_agent: str, project_root:
     )
     if code != 0:
         return (output, code)
+    _save_legacy_state(paths.state, poll_count=0, has_active=False, done=0, total=0, status_time="")
     if len(command) > 500:
         _write_private_text(paths.command, "#!/bin/bash\n" + command + "\n", 0o700)
         run_cmd("tmux", "send-keys", "-t", session, f"bash {paths.command}", "Enter")
@@ -813,8 +839,12 @@ def _legacy_claude_session_status(
     state_path = session_paths(session, root).state
 
     if not tmux_has_session(session):
+        issue = serialized_session_state_issue(state_path)
         state_path.unlink(missing_ok=True)
-        return _not_found_status()
+        status = _not_found_status()
+        if issue is not None:
+            status["session_state_issue"] = issue
+        return status
 
     current_pane_state = pane_status(session)
     if current_pane_state.startswith("crashed:"):
@@ -952,7 +982,11 @@ def _status_mode(session: str, project_root: str | None, mode: str | None) -> st
     if configured in {"legacy", "runner"}:
         return configured
     state = load_session_state(session_paths(session, project_root).state)
-    if int(state.get("schemaVersion") or 0) == STATE_SCHEMA_VERSION:
+    try:
+        schema_version = int(state.get("schemaVersion") or 0)
+    except (TypeError, ValueError):
+        return "legacy"
+    if schema_version == STATE_SCHEMA_VERSION:
         return "runner"
     return "legacy"
 

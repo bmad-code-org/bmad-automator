@@ -6,26 +6,28 @@
 
 ## Session Names
 
-**Pattern (v3.0 - MULTI-PROJECT):** `sa-{project_slug}-{YYMMDD}-{HHMMSS}-e{epic}-s{story}-{step}`
+**Pattern:** `sa-{project_slug}-{YYMMDD}-{HHMMSS}-e{epic}-s{story}-{step}`
 
 **Examples:**
 - `sa-myproj-260114-223045-e6-s64-dev` (Project "myproject", Epic 6, Story 6.4, dev step)
-- `sa-webapp-260114-223512-e6-s64-review-1` (Project "webapp", review cycle 1)
+- `sa-webapp-260114-223512-e6-s64-review-r1` (Project "webapp", review cycle 1)
 
 ### Project Slug for Multi-Project Support
 
-**Why project slug (v3.0):**
+**Why project slug + artifact hash (v3.1):**
 - **Isolates sessions per project** - List only current project's sessions
 - **Prevents cross-project interference** - Won't kill another project's sessions
 - **Enables parallel orchestration** - Run story-automator on multiple projects simultaneously
+- **Avoids same-folder-name collisions** - Runtime artifacts are scoped by project hash while public session names keep their legacy shape
 
 **Generate project slug:**
 ```bash
-# First 8 chars of project directory name (lowercase, alphanumeric only)
-project_slug=$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]' | cut -c1-8)
+script="$(printf "%s" "{project_root}/{installed-skill-root}/bmad-story-automator/scripts/story-automator")"
+project_slug=$("$script" tmux-wrapper project-slug)
+project_hash=$("$script" tmux-wrapper project-hash)
 ```
 
-**Example:** Project at `/home/user/my-awesome-project` → `project_slug="myawesom"`
+**Example:** Project at `/home/user/my-awesome-project` → `project_slug="myawesom"` plus a stable project hash for runtime artifacts.
 
 **Why timestamps with seconds (v2.1):**
 - Prevents collisions when multiple sessions spawn in same minute
@@ -35,23 +37,22 @@ project_slug=$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]'
 
 **Generate full session name:**
 ```bash
-project_slug=$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]' | cut -c1-8)
-timestamp=$(date +%y%m%d-%H%M%S)  # Returns "260114-223045"
-session_name="sa-${project_slug}-${timestamp}-e{epic}-s{story_suffix}-{step}"
+script="$(printf "%s" "{project_root}/{installed-skill-root}/bmad-story-automator/scripts/story-automator")"
+session_name=$("$script" tmux-wrapper name "{step}" "{epic}" "{story_id}")
 ```
 
 ### Listing/Killing Project-Specific Sessions
 
 **List only current project's sessions:**
 ```bash
-project_slug=$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]' | cut -c1-8)
-tmux list-sessions 2>/dev/null | grep "^sa-${project_slug}-"
+script="$(printf "%s" "{project_root}/{installed-skill-root}/bmad-story-automator/scripts/story-automator")"
+"$script" tmux-wrapper list --project-only
 ```
 
 **Kill only current project's sessions:**
 ```bash
-project_slug=$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]' | cut -c1-8)
-tmux list-sessions -F '#{session_name}' 2>/dev/null | grep "^sa-${project_slug}-" | xargs -I {} tmux kill-session -t {}
+script="$(printf "%s" "{project_root}/{installed-skill-root}/bmad-story-automator/scripts/story-automator")"
+"$script" tmux-wrapper kill-all --project-only
 ```
 
 ### No Dots in Session Names
@@ -65,7 +66,7 @@ session_suffix=$(echo "{story_id}" | tr '.' '-')
 ```
 
 **WRONG:** `sa-epic6-s6.2-review-1` ← Will fail with "can't find pane" error
-**RIGHT:** `sa-epic6-s6-2-review-1` ← Works correctly
+**RIGHT:** `sa-myproj-260114-223045-e6-s6-2-review-r1` ← Works correctly
 
 ---
 

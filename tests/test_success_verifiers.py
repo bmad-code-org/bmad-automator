@@ -14,11 +14,13 @@ from story_automator.commands.state import cmd_build_state_doc, cmd_sprint_compa
 from story_automator.commands.tmux import _build_cmd, _render_step_prompt, _verify_monitor_completion, cmd_monitor_session
 from story_automator.commands.validate_story_creation import cmd_validate_story_creation
 from story_automator.core.artifact_paths import implementation_artifacts_relpath
+from story_automator.core.parse_contracts import verifier_exception_payload
 from story_automator.core.review_verify import verify_code_review_completion
 from story_automator.core.runtime_policy import PolicyError
 from story_automator.core.sprint import sprint_status_get
 from story_automator.core.story_keys import normalize_story_key, sprint_status_file
 from story_automator.core.success_verifiers import create_story_artifact, epic_complete, review_completion
+from story_automator.core.tmux_runtime import session_paths
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -859,7 +861,7 @@ class SuccessVerifierTests(unittest.TestCase):
         self.assertEqual(payload["reason"], "verifier_contract_invalid")
 
     def test_monitor_dispatch_rejects_resolver_value_error(self) -> None:
-        with patch("story_automator.commands.tmux.resolve_success_contract", side_effect=ValueError("invalid verifier config")):
+        with patch("story_automator.commands.tmux_monitor.resolve_success_contract", side_effect=ValueError("invalid verifier config")):
             result = _verify_monitor_completion(
                 "review",
                 project_root=str(self.project_root),
@@ -897,7 +899,7 @@ class SuccessVerifierTests(unittest.TestCase):
         ]
         with patch_env(self.project_root), patch("story_automator.commands.tmux.time.sleep"), patch(
             "story_automator.commands.tmux.session_status", side_effect=statuses
-        ), patch("story_automator.commands.tmux.resolve_success_contract", side_effect=ValueError("invalid verifier config")), redirect_stdout(stdout):
+        ), patch("story_automator.commands.tmux_monitor.resolve_success_contract", side_effect=ValueError("invalid verifier config")), redirect_stdout(stdout):
             code = cmd_monitor_session(["fake-session", "--json", "--workflow", "review", "--story-key", "1.2"])
         self.assertEqual(code, 0)
         payload = json.loads(stdout.getvalue())
@@ -906,7 +908,7 @@ class SuccessVerifierTests(unittest.TestCase):
         self.assertFalse(payload["output_verified"])
 
     def test_monitor_dispatch_rejects_verifier_side_file_error(self) -> None:
-        with patch("story_automator.commands.tmux.run_success_verifier", side_effect=FileNotFoundError("missing.json")):
+        with patch("story_automator.commands.tmux_monitor.run_success_verifier", side_effect=FileNotFoundError("missing.json")):
             result = _verify_monitor_completion(
                 "review",
                 project_root=str(self.project_root),
@@ -920,7 +922,21 @@ class SuccessVerifierTests(unittest.TestCase):
         self.assertEqual(payload["reason"], "verifier_contract_invalid")
 
     def test_monitor_dispatch_rejects_verifier_value_error(self) -> None:
-        with patch("story_automator.commands.tmux.run_success_verifier", side_effect=ValueError("invalid artifacts config")):
+        with patch("story_automator.commands.tmux_monitor.run_success_verifier", side_effect=ValueError("invalid artifacts config")):
+            result = _verify_monitor_completion(
+                "review",
+                project_root=str(self.project_root),
+                story_key="1.2",
+                output_file="/tmp/session.txt",
+            )
+        self.assertIsNotNone(result)
+        payload, verifier = result or ({}, "")
+        self.assertEqual(verifier, "review_completion")
+        self.assertFalse(payload["verified"])
+        self.assertEqual(payload["reason"], "verifier_contract_invalid")
+
+    def test_monitor_dispatch_rejects_verifier_permission_error(self) -> None:
+        with patch("story_automator.commands.tmux_monitor.run_success_verifier", side_effect=PermissionError("denied")):
             result = _verify_monitor_completion(
                 "review",
                 project_root=str(self.project_root),
@@ -941,7 +957,7 @@ class SuccessVerifierTests(unittest.TestCase):
         ]
         with patch_env(self.project_root), patch("story_automator.commands.tmux.time.sleep"), patch(
             "story_automator.commands.tmux.session_status", side_effect=statuses
-        ), patch("story_automator.commands.tmux.run_success_verifier", side_effect=FileNotFoundError("missing.json")), redirect_stdout(stdout):
+        ), patch("story_automator.commands.tmux_monitor.run_success_verifier", side_effect=FileNotFoundError("missing.json")), redirect_stdout(stdout):
             code = cmd_monitor_session(["fake-session", "--json", "--workflow", "review", "--story-key", "1.2"])
         self.assertEqual(code, 0)
         payload = json.loads(stdout.getvalue())
@@ -957,7 +973,7 @@ class SuccessVerifierTests(unittest.TestCase):
         ]
         with patch_env(self.project_root), patch("story_automator.commands.tmux.time.sleep"), patch(
             "story_automator.commands.tmux.session_status", side_effect=statuses
-        ), patch("story_automator.commands.tmux.run_success_verifier", side_effect=ValueError("invalid artifacts config")), redirect_stdout(stdout):
+        ), patch("story_automator.commands.tmux_monitor.run_success_verifier", side_effect=ValueError("invalid artifacts config")), redirect_stdout(stdout):
             code = cmd_monitor_session(["fake-session", "--json", "--workflow", "review", "--story-key", "1.2"])
         self.assertEqual(code, 0)
         payload = json.loads(stdout.getvalue())
@@ -968,27 +984,108 @@ class SuccessVerifierTests(unittest.TestCase):
     def test_monitor_session_timeout_keeps_output_unverified_without_verifier_result(self) -> None:
         stdout = io.StringIO()
         with patch_env(self.project_root), patch(
-            "story_automator.commands.tmux.session_status", return_value={"active_task": "/tmp/session.txt"}
+            "story_automator.commands.tmux.session_status",
+            return_value={"active_task": "/tmp/session.txt", "todos_done": 0, "todos_total": 0, "session_state": "running", "wait_estimate": 0},
+        ), patch(
+            "story_automator.commands.tmux.time.sleep"
         ), redirect_stdout(stdout):
-            code = cmd_monitor_session(["fake-session", "--json", "--max-polls", "0"])
+            code = cmd_monitor_session(["fake-session", "--json", "--max-polls", "1", "--initial-wait", "0"])
         self.assertEqual(code, 0)
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["final_state"], "timeout")
         self.assertEqual(payload["exit_reason"], "max_polls_exceeded")
         self.assertFalse(payload["output_verified"])
 
+    def test_monitor_session_bad_numeric_option_returns_json_error(self) -> None:
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_monitor_session(["fake-session", "--max-polls", "abc", "--json"])
+
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["error"], "invalid_numeric_option")
+        self.assertEqual(payload["flag"], "--max-polls")
+
+    def test_monitor_session_rejects_zero_max_polls(self) -> None:
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_monitor_session(["fake-session", "--json", "--max-polls", "0"])
+
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["error"], "invalid_numeric_option")
+        self.assertEqual(payload["flag"], "--max-polls")
+
+    def test_monitor_session_bad_numeric_option_redacts_json_value(self) -> None:
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_monitor_session(["fake-session", "--json", "--max-polls", "token=abc123"])
+
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["value"], "token=<redacted>")
+        self.assertNotIn("abc123", json.dumps(payload, separators=(",", ":")))
+
+    def test_monitor_session_missing_numeric_option_value_returns_json_error(self) -> None:
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_monitor_session(["fake-session", "--json", "--max-polls"])
+
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["error"], "invalid_numeric_option")
+        self.assertEqual(payload["flag"], "--max-polls")
+
+    def test_monitor_session_missing_numeric_option_value_returns_stderr_error(self) -> None:
+        stderr = io.StringIO()
+        with patch_env(self.project_root), redirect_stderr(stderr):
+            code = cmd_monitor_session(["fake-session", "--max-polls"])
+
+        self.assertEqual(code, 1)
+        self.assertIn("--max-polls requires a positive integer", stderr.getvalue())
+
+    def test_monitor_session_initial_wait_uses_non_negative_error_text(self) -> None:
+        stderr = io.StringIO()
+        with patch_env(self.project_root), redirect_stderr(stderr):
+            code = cmd_monitor_session(["fake-session", "--initial-wait", "-1"])
+
+        self.assertEqual(code, 1)
+        self.assertIn("--initial-wait requires a non-negative integer", stderr.getvalue())
+
+    def test_monitor_session_missing_value_option_returns_json_error(self) -> None:
+        for flag in ("--agent", "--workflow", "--story-key", "--state-file", "--project-root"):
+            with self.subTest(flag=flag):
+                stdout = io.StringIO()
+                with patch_env(self.project_root), redirect_stdout(stdout):
+                    code = cmd_monitor_session(["fake-session", "--json", flag])
+
+                self.assertEqual(code, 1)
+                payload = json.loads(stdout.getvalue())
+                self.assertEqual(payload["error"], "missing_option_value")
+                self.assertEqual(payload["flag"], flag)
+
+    def test_monitor_session_rejects_next_flag_as_value_option(self) -> None:
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_monitor_session(["fake-session", "--json", "--agent", "--workflow", "review"])
+
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["error"], "missing_option_value")
+        self.assertEqual(payload["flag"], "--agent")
+
     def test_monitor_session_runtime_agent_uses_resolved_provider_flags(self) -> None:
         calls: list[dict[str, object]] = []
 
         def fake_session_status(*args: object, **kwargs: object) -> dict[str, object]:
             calls.append({"args": args, **kwargs})
-            return {"active_task": "/tmp/session.txt"}
+            return {"active_task": "/tmp/session.txt", "todos_done": 0, "todos_total": 0, "session_state": "running", "wait_estimate": 0}
 
         stdout = io.StringIO()
         with patch_env(self.project_root), patch("story_automator.commands.tmux.runtime_provider", return_value="codex"), patch(
             "story_automator.commands.tmux.session_status", side_effect=fake_session_status
-        ), redirect_stdout(stdout):
-            code = cmd_monitor_session(["fake-session", "--json", "--max-polls", "0", "--agent", "runtime"])
+        ), patch("story_automator.commands.tmux.time.sleep"), redirect_stdout(stdout):
+            code = cmd_monitor_session(["fake-session", "--json", "--max-polls", "1", "--initial-wait", "0", "--agent", "runtime"])
 
         self.assertEqual(code, 0)
         self.assertTrue(calls)
@@ -1003,6 +1100,86 @@ class SuccessVerifierTests(unittest.TestCase):
             code = cmd_monitor_session(["fake-session", "--json", "--max-polls", "1"])
         self.assertEqual(code, 0)
         self.assertFalse(session_status_mock.call_args.kwargs["codex"])
+
+    def test_monitor_session_json_reports_malformed_session_state_when_session_gone(self) -> None:
+        session = "sa-test-session"
+        paths = session_paths(session, self.project_root)
+        paths.state.parent.mkdir(parents=True, exist_ok=True)
+        paths.state.write_text("{bad json", encoding="utf-8")
+        stdout = io.StringIO()
+        with patch_env(self.project_root), patch(
+            "story_automator.commands.tmux.session_status",
+            return_value={"active_task": "", "todos_done": 0, "todos_total": 0, "wait_estimate": 0, "session_state": "not_found"},
+        ), redirect_stdout(stdout):
+            code = cmd_monitor_session([session, "--json", "--max-polls", "1"])
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["final_state"], "not_found")
+        self.assertEqual(payload["structuredIssues"][0]["type"], "session_state.invalid_json")
+
+    def test_monitor_session_json_reports_non_numeric_schema_version(self) -> None:
+        session = "sa-test-session"
+        paths = session_paths(session, self.project_root)
+        paths.state.parent.mkdir(parents=True, exist_ok=True)
+        paths.state.write_text('{"schemaVersion":"bad","lifecycle":"running"}', encoding="utf-8")
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_monitor_session([session, "--json", "--max-polls", "1", "--initial-wait", "0"])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["final_state"], "not_found")
+        self.assertEqual(payload["structuredIssues"][0]["type"], "session_state.unexpected_schema_version")
+
+    def test_monitor_session_checks_session_state_issue_only_when_session_is_gone(self) -> None:
+        session = "sa-test-session"
+        statuses = [
+            {"active_task": "", "todos_done": 0, "todos_total": 0, "wait_estimate": 0, "session_state": "running"},
+            {"active_task": "", "todos_done": 0, "todos_total": 0, "wait_estimate": 0, "session_state": "running"},
+            {"active_task": "", "todos_done": 0, "todos_total": 0, "wait_estimate": 0, "session_state": "not_found"},
+        ]
+        stdout = io.StringIO()
+        with patch_env(self.project_root), patch("story_automator.commands.tmux.time.sleep"), patch(
+            "story_automator.commands.tmux.session_status",
+            side_effect=statuses,
+        ), patch("story_automator.commands.tmux.monitor_session_state_issue", return_value=None) as state_issue_mock, redirect_stdout(stdout):
+            code = cmd_monitor_session([session, "--json", "--max-polls", "3"])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(state_issue_mock.call_count, 1)
+
+    def test_monitor_session_stuck_preserves_last_known_progress(self) -> None:
+        statuses = [
+            {"active_task": "", "todos_done": 2, "todos_total": 4, "wait_estimate": 0, "session_state": "running"},
+            {"active_task": "/tmp/session.txt", "todos_done": 2, "todos_total": 4, "wait_estimate": 0, "session_state": "stuck"},
+            {"active_task": "/tmp/session.txt"},
+        ]
+        stdout = io.StringIO()
+        with patch_env(self.project_root), patch("story_automator.commands.tmux.time.sleep"), patch(
+            "story_automator.commands.tmux.session_status",
+            side_effect=statuses,
+        ), redirect_stdout(stdout):
+            code = cmd_monitor_session(["fake-session", "--json", "--max-polls", "2", "--initial-wait", "0"])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["final_state"], "stuck")
+        self.assertEqual(payload["todos_done"], 2)
+        self.assertEqual(payload["todos_total"], 4)
+
+    def test_monitor_session_csv_does_not_include_structured_issues(self) -> None:
+        session = "sa-test-session"
+        paths = session_paths(session, self.project_root)
+        paths.state.parent.mkdir(parents=True, exist_ok=True)
+        paths.state.write_text("{bad json", encoding="utf-8")
+        stdout = io.StringIO()
+        with patch_env(self.project_root), patch(
+            "story_automator.commands.tmux.session_status",
+            return_value={"active_task": "", "todos_done": 0, "todos_total": 0, "wait_estimate": 0, "session_state": "not_found"},
+        ), redirect_stdout(stdout):
+            code = cmd_monitor_session([session, "--max-polls", "1"])
+        self.assertEqual(code, 0)
+        self.assertEqual(stdout.getvalue().strip(), "not_found,0,0,,session_gone")
 
     def test_monitor_dispatch_allows_session_exit_without_story_key(self) -> None:
         result = _verify_monitor_completion(
@@ -1145,12 +1322,24 @@ class SuccessVerifierTests(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertFalse(payload["valid"])
         self.assertIn("missing-state.md", payload["reason"])
+        self.assertEqual(payload["structuredIssues"][0]["field"], "--state-file")
+        self.assertEqual(payload["structuredIssues"][0]["source"], "validate-story-creation")
+
+    def test_validate_story_creation_bad_counts_include_structured_issues(self) -> None:
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_validate_story_creation(["check", "1.2", "--before", "x", "--after", "1"])
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["reason"], "before/after must be integers")
+        self.assertEqual(payload["structuredIssues"][0]["field"], "--before/--after")
 
     def test_review_wrapper_normalizes_directory_state_file(self) -> None:
         payload = verify_code_review_completion(str(self.project_root), "1.2", state_file=self.project_root)
         self.assertFalse(payload["verified"])
         self.assertEqual(payload["reason"], "review_contract_invalid")
         self.assertIn("state file unreadable", str(payload.get("error")))
+        self.assertEqual(payload["structuredIssues"][0]["source"], "verify-code-review")
 
     def test_validate_story_creation_check_returns_compat_schema_on_directory_state_file(self) -> None:
         stdout = io.StringIO()
@@ -1196,6 +1385,17 @@ class SuccessVerifierTests(unittest.TestCase):
         self.assertFalse(payload["verified"])
         self.assertEqual(payload["reason"], "verifier_contract_invalid")
         self.assertEqual(payload["error"], "--state-file requires a value")
+        self.assertEqual(payload["structuredIssues"][0]["field"], "--state-file")
+        self.assertEqual(payload["structuredIssues"][0]["source"], "verify-step")
+
+    def test_verify_step_rejects_incomplete_output_file_flag_with_field(self) -> None:
+        stdout = io.StringIO()
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_orchestrator_helper(["verify-step", "create", "1.2", "--output-file"])
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["error"], "--output-file requires a value")
+        self.assertEqual(payload["structuredIssues"][0]["field"], "--output-file")
 
     def test_verify_code_review_rejects_incomplete_state_file_flag(self) -> None:
         stdout = io.StringIO()
@@ -1206,6 +1406,92 @@ class SuccessVerifierTests(unittest.TestCase):
         self.assertFalse(payload["verified"])
         self.assertEqual(payload["reason"], "review_contract_invalid")
         self.assertEqual(payload["error"], "--state-file requires a value")
+        self.assertEqual(payload["structuredIssues"][0]["field"], "--state-file")
+        self.assertEqual(payload["structuredIssues"][0]["source"], "verify-code-review")
+
+    def test_verifier_exception_payload_redacts_legacy_error(self) -> None:
+        payload = verifier_exception_payload(
+            "verifier_contract_invalid",
+            ValueError("token=abc123 failed at /Users/joon/My Project/private/state.md"),
+            source="verify-step",
+        )
+
+        serialized = json.dumps(payload, separators=(",", ":"))
+        self.assertNotIn("token=abc123", serialized)
+        self.assertNotIn("My Project/private", serialized)
+        self.assertEqual(payload["error"], "token=<redacted> failed at <path:state.md>")
+
+    def test_verifier_exception_payload_redacts_extra_fields(self) -> None:
+        payload = verifier_exception_payload(
+            "verifier_contract_invalid",
+            ValueError("--state-file requires a value"),
+            source="verify-step",
+            input="OPENAI_API_KEY=sk-cli123 /Users/joon/private/state.md",
+            token="abc123",
+            api_key="sk-extra123",
+        )
+
+        serialized = json.dumps(payload, separators=(",", ":"))
+        self.assertNotIn("sk-cli123", serialized)
+        self.assertNotIn("abc123", serialized)
+        self.assertNotIn("sk-extra123", serialized)
+        self.assertNotIn("/Users/joon/private", serialized)
+        self.assertEqual(payload["input"], "OPENAI_API_KEY=<redacted> <path:state.md>")
+        self.assertEqual(payload["token"], "<redacted>")
+        self.assertEqual(payload["api_key"], "<redacted>")
+
+    def test_verifier_exception_payload_keeps_reserved_fields_authoritative(self) -> None:
+        payload = verifier_exception_payload(
+            "verifier_contract_invalid",
+            ValueError("--state-file requires a value"),
+            source="verify-step",
+            verified=True,
+            error="caller-error",
+            extra={"caller": "kept"},
+            structuredIssues=[],
+        )
+
+        self.assertFalse(payload["verified"])
+        self.assertEqual(payload["reason"], "verifier_contract_invalid")
+        self.assertEqual(payload["error"], "--state-file requires a value")
+        self.assertEqual(payload["structuredIssues"][0]["type"], "ValueError")
+        self.assertEqual(payload["callerExtra"], {"caller": "kept"})
+        self.assertEqual(payload["extra"]["reservedFields"]["verified"], True)
+        self.assertEqual(payload["extra"]["reservedFields"]["error"], "caller-error")
+
+    def test_verifier_exception_payload_preserves_caller_extra_collision(self) -> None:
+        payload = verifier_exception_payload(
+            "verifier_contract_invalid",
+            ValueError("--state-file requires a value"),
+            source="verify-step",
+            verified=True,
+            extra={"caller": "kept"},
+            callerExtra={"also": "kept"},
+        )
+
+        self.assertEqual(payload["callerExtra"], {"extra": {"caller": "kept"}, "callerExtra": {"also": "kept"}})
+        self.assertEqual(payload["extra"]["reservedFields"]["verified"], True)
+
+    def test_validate_story_creation_reason_redacts_sensitive_context(self) -> None:
+        stdout = io.StringIO()
+        missing = self.project_root / "token=abc123" / "missing-state.md"
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_validate_story_creation(["check", "1.2", "--state-file", str(missing)])
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        serialized = json.dumps(payload, separators=(",", ":"))
+        self.assertNotIn("token=abc123", serialized)
+        self.assertNotIn(str(self.project_root), serialized)
+        self.assertIn("<path:missing-state.md>", payload["reason"])
+
+    def test_validate_story_creation_reason_redaction_is_idempotent(self) -> None:
+        stdout = io.StringIO()
+        missing = self.project_root / "token=abc123" / "missing-state.md"
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_validate_story_creation(["check", "1.2", "--state-file", str(missing)])
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["reason"], "state file unreadable: <path:missing-state.md>")
 
     def test_validate_story_creation_check_returns_compat_schema_on_bad_counts(self) -> None:
         stdout = io.StringIO()

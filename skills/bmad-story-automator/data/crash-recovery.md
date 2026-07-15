@@ -21,18 +21,24 @@ The status script returns `session_state` in CSV column 6:
 | Retry 1 failed | Retry with `-r2` suffix in session name |
 | Retry 2 failed | Escalate to user with diagnostics |
 
+For `monitor-session --json`, malformed persisted runner state can add
+`structuredIssues` to the result. CSV status commands keep the exact six-column
+format. Treat `session_state.invalid_json`, `session_state.invalid_type`,
+`session_state.unexpected_schema_version`, and `session_state.unreadable` as runtime-state diagnostics, then verify workflow
+truth from story files and `sprint-status.yaml` before retrying.
+
 ---
 
 ## Retry Pattern
 
 ```bash
 # On crash/not_found, spawn retry with unique suffix
-project_slug=$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]' | cut -c1-8)
+project_slug=$("$scripts" tmux-wrapper project-slug)
+PROJECT_HASH=$("$scripts" tmux-wrapper project-hash)
 timestamp=$(date +%y%m%d-%H%M%S)
 session_name="sa-${project_slug}-${timestamp}-e{epic}-s{story_suffix}-{step}-r2"
 
 # Clear stale state (project-scoped v2.0)
-PROJECT_HASH=$(echo -n "$PWD" | md5sum 2>/dev/null | cut -c1-8 || echo -n "$PWD" | md5 -q 2>/dev/null | cut -c1-8)
 rm -f "/tmp/.sa-${PROJECT_HASH}-session-${session_name}-state.json"
 # ... spawn and monitor as normal
 ```

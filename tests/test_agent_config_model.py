@@ -13,10 +13,13 @@ from unittest.mock import patch
 from story_automator.core.agent_config import (
     AgentTaskConfig,
     build_agents_file,
+    has_agent_config_runtime_source,
+    load_agent_config_from_state,
     parse_agent_config_json,
     resolve_agent_for_task,
     resolve_agents,
 )
+from story_automator.core.agent_config_frontmatter import extract_agent_config_frontmatter
 from story_automator.core.tmux_runtime import agent_cli
 from story_automator.commands.orchestrator import cmd_orchestrator_helper
 from story_automator.commands.orchestrator_epic_agents import (
@@ -60,6 +63,40 @@ class AgentCliModelTests(unittest.TestCase):
 
 
 class CoreAgentConfigModelTests(unittest.TestCase):
+    def test_parse_agent_config_json_rejects_nested_agent_config_with_clear_message(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unexpected nested agentConfig key"):
+            parse_agent_config_json(json.dumps({"agentConfig": {"defaultPrimary": "codex"}}))
+
+    def test_agent_config_frontmatter_rejects_scalar_inline_value(self) -> None:
+        with self.assertRaisesRegex(ValueError, "agentConfig inline value must be an object/map"):
+            extract_agent_config_frontmatter('agentConfig: bad\n')
+
+    def test_agent_config_frontmatter_rejects_empty_leaf_value(self) -> None:
+        with self.assertRaisesRegex(ValueError, "value or nested map"):
+            extract_agent_config_frontmatter("agentConfig:\n  defaultPrimary:\n")
+
+    def test_agent_config_frontmatter_rejects_comment_only_leaf_value(self) -> None:
+        with self.assertRaisesRegex(ValueError, "value or nested map"):
+            extract_agent_config_frontmatter("agentConfig:\n  defaultPrimary:\n    # placeholder\n")
+
+    def test_agent_config_frontmatter_rejects_unbalanced_inline_map_braces(self) -> None:
+        with self.assertRaisesRegex(ValueError, "balanced braces"):
+            extract_agent_config_frontmatter("agentConfig: {defaultPrimary: claude}}\n")
+
+    def test_has_agent_config_runtime_source_counts_default_model(self) -> None:
+        self.assertTrue(has_agent_config_runtime_source('---\nagentConfig:\n  defaultModel: "claude-opus"\n---\n'))
+        self.assertTrue(has_agent_config_runtime_source('---\nagentConfig:\n  defaultModel: ""\n---\n'))
+
+    def test_has_agent_config_runtime_source_ignores_unsupported_top_level_model(self) -> None:
+        self.assertFalse(has_agent_config_runtime_source('---\nagentConfig:\n  model: "claude-opus"\n---\n'))
+
+    def test_has_agent_config_runtime_source_counts_legacy_level_overrides(self) -> None:
+        self.assertTrue(
+            has_agent_config_runtime_source(
+                '---\nagentConfig:\n  low:\n    review:\n      primary: codex\n---\n'
+            )
+        )
+
     def test_per_task_model_is_resolved(self) -> None:
         config = parse_agent_config_json(
             json.dumps(
@@ -655,6 +692,16 @@ class RetroAgentModelFromStateTests(unittest.TestCase):
         self.assertEqual(code, 0)
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["model"], "claude-opus-4-7[1m]")
+
+    def test_agent_config_state_rejects_unterminated_delimiter_like_value(self) -> None:
+        state_file = self.project_root / "retro-state.md"
+        state_file.write_text(
+            '---\nagentConfig:\n  defaultPrimary: "cod---ex"\n',
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(ValueError, "unterminated"):
+            load_agent_config_from_state(state_file)
 
 
 class MarkdownHandoffShellContractTests(unittest.TestCase):

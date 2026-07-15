@@ -130,10 +130,161 @@ class RetroAgentTests(unittest.TestCase):
         text = state_file.read_text(encoding="utf-8")
         self.assertIn("perTask:\n    retro:\n      primary: \"codex\"\n      fallback: false\n", text)
 
+    def test_build_state_doc_preserves_legacy_complexity_override(self) -> None:
+        stdout = io.StringIO()
+        template = self.project_root / ".claude" / "skills" / "bmad-story-automator" / "templates" / "state-document.md"
+        config = self._config()
+        config["agentConfig"] = {
+            "defaultPrimary": "claude",
+            "defaultFallback": False,
+            "medium": {"retro": {"primary": "codex", "fallback": False}},
+        }
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_build_state_doc(
+                [
+                    "--template",
+                    str(template),
+                    "--output-folder",
+                    str(self.output_dir),
+                    "--config-json",
+                    json.dumps(config),
+                ]
+            )
+
+        self.assertEqual(code, 0)
+        state_file = Path(json.loads(stdout.getvalue())["path"])
+        text = state_file.read_text(encoding="utf-8")
+        self.assertIn("complexityOverrides:\n    medium:\n      retro:\n        primary: \"codex\"\n        fallback: false\n", text)
+        payload = self._run_retro_agent(state_file)
+        self.assertEqual(payload["primary"], "codex")
+
+    def test_build_state_doc_merges_empty_explicit_complexity_override_with_legacy_level(self) -> None:
+        stdout = io.StringIO()
+        template = self.project_root / ".claude" / "skills" / "bmad-story-automator" / "templates" / "state-document.md"
+        config = self._config()
+        config["agentConfig"] = {
+            "defaultPrimary": "claude",
+            "defaultFallback": False,
+            "complexityOverrides": {"medium": {}},
+            "medium": {"retro": {"primary": "codex", "fallback": False}},
+        }
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_build_state_doc(
+                [
+                    "--template",
+                    str(template),
+                    "--output-folder",
+                    str(self.output_dir),
+                    "--config-json",
+                    json.dumps(config),
+                ]
+            )
+
+        self.assertEqual(code, 0)
+        state_file = Path(json.loads(stdout.getvalue())["path"])
+        text = state_file.read_text(encoding="utf-8")
+        self.assertIn("complexityOverrides:\n    medium:\n      retro:\n        primary: \"codex\"\n        fallback: false\n", text)
+        payload = self._run_retro_agent(state_file)
+        self.assertEqual(payload["primary"], "codex")
+
+    def test_build_state_doc_merges_empty_explicit_complexity_task_with_legacy_level(self) -> None:
+        stdout = io.StringIO()
+        template = self.project_root / ".claude" / "skills" / "bmad-story-automator" / "templates" / "state-document.md"
+        config = self._config()
+        config["agentConfig"] = {
+            "defaultPrimary": "claude",
+            "defaultFallback": False,
+            "complexityOverrides": {"medium": {"retro": {}}},
+            "medium": {"retro": {"primary": "codex", "fallback": False}},
+        }
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_build_state_doc(
+                [
+                    "--template",
+                    str(template),
+                    "--output-folder",
+                    str(self.output_dir),
+                    "--config-json",
+                    json.dumps(config),
+                ]
+            )
+
+        self.assertEqual(code, 0)
+        state_file = Path(json.loads(stdout.getvalue())["path"])
+        text = state_file.read_text(encoding="utf-8")
+        self.assertIn("complexityOverrides:\n    medium:\n      retro:\n        primary: \"codex\"\n        fallback: false\n", text)
+        payload = self._run_retro_agent(state_file)
+        self.assertEqual(payload["primary"], "codex")
+
     def test_retro_agent_uses_complexity_override_from_state(self) -> None:
         state_file = self.project_root / "retro-complexity-state.md"
         state_file.write_text(
             "---\nagentConfig:\n  defaultPrimary: \"claude\"\n  defaultFallback: \"codex\"\n  complexityOverrides:\n    medium:\n      retro:\n        primary: \"codex\"\n        fallback: false\n---\n",
+            encoding="utf-8",
+        )
+
+        payload = self._run_retro_agent(state_file)
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["primary"], "codex")
+        self.assertEqual(payload["fallback"], "false")
+
+    def test_retro_agent_accepts_nested_complexity_header_comments(self) -> None:
+        state_file = self.project_root / "retro-complexity-comment-state.md"
+        state_file.write_text(
+            "---\nagentConfig:\n  defaultPrimary: \"claude\"\n  defaultFallback: \"codex\"\n  complexityOverrides:\n    medium: # runtime complexity\n      retro: # runtime task\n        primary: \"codex\"\n        fallback: false\n---\n",
+            encoding="utf-8",
+        )
+
+        payload = self._run_retro_agent(state_file)
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["primary"], "codex")
+        self.assertEqual(payload["fallback"], "false")
+
+    def test_retro_agent_accepts_quoted_nested_complexity_keys(self) -> None:
+        state_file = self.project_root / "retro-complexity-quoted-state.md"
+        state_file.write_text(
+            "---\nagentConfig:\n  defaultPrimary: \"claude\"\n  defaultFallback: \"codex\"\n  complexityOverrides:\n    \"medium\":\n      \"retro\":\n        \"primary\": \"codex\"\n        \"fallback\": false\n---\n",
+            encoding="utf-8",
+        )
+
+        payload = self._run_retro_agent(state_file)
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["primary"], "codex")
+        self.assertEqual(payload["fallback"], "false")
+
+    def test_retro_agent_accepts_inline_empty_agent_config_maps(self) -> None:
+        state_file = self.project_root / "retro-inline-empty-map-state.md"
+        state_file.write_text(
+            "---\nagentConfig:\n  defaultPrimary: \"codex\"\n  defaultFallback: false\n  perTask: {}\n  complexityOverrides: {}\n---\n",
+            encoding="utf-8",
+        )
+
+        payload = self._run_retro_agent(state_file)
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["primary"], "codex")
+        self.assertEqual(payload["fallback"], "false")
+
+    def test_retro_agent_accepts_inline_nested_agent_config_maps(self) -> None:
+        state_file = self.project_root / "retro-inline-nested-map-state.md"
+        state_file.write_text(
+            "---\nagentConfig:\n  defaultPrimary: claude\n  perTask: {retro: {primary: codex, fallback: false}}\n---\n",
+            encoding="utf-8",
+        )
+
+        payload = self._run_retro_agent(state_file)
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["primary"], "codex")
+        self.assertEqual(payload["fallback"], "false")
+
+    def test_retro_agent_accepts_inline_agent_config_header_map(self) -> None:
+        state_file = self.project_root / "retro-inline-header-map-state.md"
+        state_file.write_text(
+            "---\nagentConfig: {defaultPrimary: codex, defaultFallback: false}\n---\n",
             encoding="utf-8",
         )
 
@@ -155,6 +306,66 @@ class RetroAgentTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["primary"], "codex")
         self.assertEqual(payload["fallback"], "claude")
+
+    def test_retro_agent_accepts_agent_config_header_with_comment(self) -> None:
+        state_file = self.project_root / "retro-header-comment-state.md"
+        state_file.write_text(
+            "---\nagentConfig: # runtime config\n  defaultPrimary: \"codex\"\n  defaultFallback: false\n---\n",
+            encoding="utf-8",
+        )
+
+        payload = self._run_retro_agent(state_file)
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["primary"], "codex")
+        self.assertEqual(payload["fallback"], "false")
+
+    def test_retro_agent_rejects_invalid_nested_complexity_override_frontmatter(self) -> None:
+        cases = (
+            "---\nagentConfig:\n  complexityOverrides:\n    medium: bad\n---\n",
+            "---\nagentConfig:\n  complexityOverrides:\n    medium:\n      retro: bad\n---\n",
+            "---\nagentConfig:\n  complexityOverrides:\n    medium:\n      retro:\n        - primary: \"codex\"\n---\n",
+            "---\nagentConfig:\n  complexityOverrides:\n    medium:\n      retro:\n        primary:\n---\n",
+            "---\nagentConfig:\n  complexityOverrides:\n    medium:\n      retro:\n        fallback:\n---\n",
+            "---\nagentConfig:\n  complexityOverrides:\n    - medium:\n        retro:\n          primary: \"codex\"\n---\n",
+            "---\nagentConfig:\n  complexityOverrides:\n    medium:\n     retro:\n        primary: \"codex\"\n---\n",
+            "---\nagentConfig:\n  defaultPrimary: \"claude\"\n    complexityOverrides:\n      medium:\n        retro:\n          primary: \"codex\"\n---\n",
+            "---\nagentConfig: bad\n  complexityOverrides:\n    medium:\n      retro:\n        primary: \"codex\"\n---\n",
+            "---\n  agentConfig: {defaultPrimary: codex}\n---\n",
+            "---\nagentConfig:\n\tdefaultPrimary: \"claude\"\n\tcomplexityOverrides:\n\t  medium:\n\t    retro:\n\t      primary: \"codex\"\n---\n",
+            "---\nagentConfig:\n  \tdefaultPrimary: \"claude\"\n---\n",
+            "---\nagentConfig:\ncomplexityOverrides:\n  medium:\n    retro:\n      primary: \"codex\"\n---\n",
+            "---\nagentConfig:\n  defaultPrimary: \"codex\n---\n",
+        )
+        for index, content in enumerate(cases):
+            with self.subTest(index=index):
+                state_file = self.project_root / f"retro-invalid-complexity-{index}.md"
+                state_file.write_text(content, encoding="utf-8")
+                stdout = io.StringIO()
+
+                with patch_env(self.project_root), redirect_stdout(stdout):
+                    code = cmd_orchestrator_helper(["retro-agent", "--state-file", str(state_file)])
+
+                payload = json.loads(stdout.getvalue())
+                self.assertEqual(code, 1)
+                self.assertEqual(payload["error"], "invalid_agent_config")
+                self.assertRegex(payload["structuredIssues"][0]["message"], r"agentConfig|complexityOverrides")
+
+    def test_retro_agent_rejects_unterminated_frontmatter(self) -> None:
+        state_file = self.project_root / "retro-unterminated-state.md"
+        state_file.write_text(
+            "---\nagentConfig:\n  complexityOverrides:\n    medium:\n      retro:\n        primary: \"codex\"\n",
+            encoding="utf-8",
+        )
+        stdout = io.StringIO()
+
+        with patch_env(self.project_root), redirect_stdout(stdout):
+            code = cmd_orchestrator_helper(["retro-agent", "--state-file", str(state_file)])
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(code, 1)
+        self.assertEqual(payload["error"], "invalid_agent_config")
+        self.assertIn("unterminated", payload["structuredIssues"][0]["message"])
 
     def _run_retro_agent(self, state_file: Path) -> dict[str, object]:
         stdout = io.StringIO()

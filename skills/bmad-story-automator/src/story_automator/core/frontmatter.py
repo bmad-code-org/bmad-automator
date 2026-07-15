@@ -9,27 +9,47 @@ from .utils import parse_string_list_literal, read_text, trim_lines, unquote_sca
 
 
 def extract_frontmatter(text: str) -> str:
-    if not text.startswith("---"):
+    frontmatter, _body = split_frontmatter_document(text)
+    if not frontmatter:
         return ""
-    parts = text.split("---", 2)
-    if len(parts) < 3:
-        return ""
-    return parts[1].lstrip("\n")
+    return frontmatter_content(frontmatter).lstrip("\n")
 
 
 def split_frontmatter(text: str) -> tuple[str, str]:
-    if not text.startswith("---"):
+    frontmatter, body = split_frontmatter_document(text)
+    if not frontmatter:
         return "", text
-    parts = text.split("---", 2)
-    if len(parts) < 3:
+    return frontmatter_content(frontmatter).lstrip("\n"), body.lstrip("\n")
+
+
+def split_frontmatter_document(text: str) -> tuple[str, str]:
+    lines = text.splitlines(keepends=True)
+    if not lines or lines[0].strip() != "---":
         return "", text
-    return parts[1].lstrip("\n"), parts[2].lstrip("\n")
+    for index, line in enumerate(lines[1:], start=1):
+        if line.strip() == "---":
+            return "".join(lines[: index + 1]), "".join(lines[index + 1 :])
+    return "", text
+
+
+def frontmatter_content(frontmatter: str) -> str:
+    lines = frontmatter.splitlines(keepends=True)
+    if not lines or lines[0].strip() != "---":
+        return frontmatter
+    for index, line in enumerate(lines[1:], start=1):
+        if line.strip() == "---":
+            return "".join(lines[1:index])
+    return frontmatter
 
 
 def parse_simple_frontmatter(text: str) -> dict[str, Any]:
     front = extract_frontmatter(text)
     if not front:
         return {}
+    return parse_frontmatter_content(front)
+
+
+def parse_frontmatter_content(front: str) -> dict[str, Any]:
     fields: dict[str, Any] = {}
     current_key = ""
     for line in trim_lines(front):

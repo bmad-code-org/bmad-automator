@@ -51,14 +51,64 @@ class OrchestratorParseTests(unittest.TestCase):
         with patch.dict("os.environ", {"PROJECT_ROOT": str(self.project_root)}), redirect_stdout(stdout):
             code = parse_output_action([str(self.output_file), "create"])
         self.assertEqual(code, 1)
-        self.assertEqual(json.loads(stdout.getvalue())["reason"], "parse_contract_invalid")
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["reason"], "parse_contract_invalid")
+        self.assertEqual(payload["structuredIssues"][0]["field"], "parse.schemaPath")
+        self.assertEqual(payload["structuredIssues"][0]["source"], "parse-contract")
+
+    def test_missing_prompt_template_reports_runtime_policy_field(self) -> None:
+        override_dir = self.project_root / "_bmad" / "bmm"
+        override_dir.mkdir(parents=True)
+        (override_dir / "story-automator.policy.json").write_text(
+            json.dumps({"steps": {"create": {"prompt": {"templateFile": "missing.md"}}}}),
+            encoding="utf-8",
+        )
+        stdout = io.StringIO()
+
+        with patch.dict("os.environ", {"PROJECT_ROOT": str(self.project_root)}), redirect_stdout(stdout):
+            code = parse_output_action([str(self.output_file), "create"])
+
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["reason"], "runtime_policy_invalid")
+        self.assertEqual(payload["structuredIssues"][0]["source"], "runtime-policy")
+        self.assertEqual(payload["structuredIssues"][0]["field"], "runtime.policy")
 
     def test_missing_state_file_flag_value_rejected(self) -> None:
         stdout = io.StringIO()
         with patch.dict("os.environ", {"PROJECT_ROOT": str(self.project_root)}), redirect_stdout(stdout):
             code = parse_output_action([str(self.output_file), "create", "--state-file"])
         self.assertEqual(code, 1)
-        self.assertEqual(json.loads(stdout.getvalue())["reason"], "parse_contract_invalid")
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["reason"], "parse_contract_invalid")
+        self.assertEqual(payload["structuredIssues"][0]["field"], "--state-file")
+
+    def test_missing_explicit_state_file_reports_runtime_policy_field(self) -> None:
+        stdout = io.StringIO()
+        missing_state = self.project_root / "missing-state.md"
+
+        with patch.dict("os.environ", {"PROJECT_ROOT": str(self.project_root)}), redirect_stdout(stdout):
+            code = parse_output_action([str(self.output_file), "create", "--state-file", str(missing_state)])
+
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["reason"], "runtime_policy_invalid")
+        self.assertEqual(payload["structuredIssues"][0]["source"], "runtime-policy")
+        self.assertEqual(payload["structuredIssues"][0]["field"], "runtime.policy")
+
+    def test_output_file_directory_reports_json_failure(self) -> None:
+        stdout = io.StringIO()
+        directory = self.project_root / "output-dir"
+        directory.mkdir()
+
+        with patch.dict("os.environ", {"PROJECT_ROOT": str(self.project_root)}), redirect_stdout(stdout):
+            code = parse_output_action([str(directory), "create"])
+
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["reason"], "output file not found or empty")
+        self.assertEqual(payload["structuredIssues"][0]["field"], "output_file")
 
     def test_non_string_required_key_rejected(self) -> None:
         schema = self.project_root / ".claude" / "skills" / "bmad-story-automator" / "data" / "parse" / "create.json"
@@ -67,7 +117,27 @@ class OrchestratorParseTests(unittest.TestCase):
         with patch.dict("os.environ", {"PROJECT_ROOT": str(self.project_root)}), redirect_stdout(stdout):
             code = parse_output_action([str(self.output_file), "create"])
         self.assertEqual(code, 1)
-        self.assertEqual(json.loads(stdout.getvalue())["reason"], "parse_contract_invalid")
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["reason"], "parse_contract_invalid")
+        self.assertEqual(payload["structuredIssues"][0]["field"], "requiredKeys")
+        self.assertEqual(payload["structuredIssues"][0]["source"], "parse-contract")
+
+    def test_invalid_schema_leaf_rejected_before_sub_agent(self) -> None:
+        schema = self.project_root / ".claude" / "skills" / "bmad-story-automator" / "data" / "parse" / "review.json"
+        schema.write_text(json.dumps({"requiredKeys": ["status"], "schema": {"issues_found": {"critical": 5}}}), encoding="utf-8")
+        stdout = io.StringIO()
+        with patch.dict("os.environ", {"PROJECT_ROOT": str(self.project_root)}), patch(
+            "story_automator.commands.orchestrator_parse.run_cmd",
+            return_value=CommandResult('{"status":"SUCCESS"}', 0),
+        ) as mock_run, redirect_stdout(stdout):
+            code = parse_output_action([str(self.output_file), "review"])
+
+        self.assertEqual(code, 1)
+        mock_run.assert_not_called()
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["reason"], "parse_contract_invalid")
+        self.assertEqual(payload["structuredIssues"][0]["field"], "schema.issues_found.critical")
+        self.assertEqual(payload["structuredIssues"][0]["source"], "parse-contract")
 
     def test_invalid_child_json_rejected(self) -> None:
         stdout = io.StringIO()
@@ -77,7 +147,9 @@ class OrchestratorParseTests(unittest.TestCase):
         ), redirect_stdout(stdout):
             code = parse_output_action([str(self.output_file), "create"])
         self.assertEqual(code, 1)
-        self.assertEqual(json.loads(stdout.getvalue())["reason"], "sub-agent returned invalid json")
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["reason"], "sub-agent returned invalid json")
+        self.assertEqual(payload["structuredIssues"][0]["field"], "payload")
 
     def test_output_shape_remains_compatible(self) -> None:
         stdout = io.StringIO()
@@ -99,7 +171,10 @@ class OrchestratorParseTests(unittest.TestCase):
         ), redirect_stdout(stdout):
             code = parse_output_action([str(self.output_file), "review"])
         self.assertEqual(code, 1)
-        self.assertEqual(json.loads(stdout.getvalue())["reason"], "sub-agent returned invalid json")
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["reason"], "sub-agent returned invalid json")
+        self.assertEqual(payload["structuredIssues"][0]["field"], "issues_found.critical")
+        self.assertEqual(payload["structuredIssues"][0]["type"], "invalid_type")
 
     def test_review_output_rejects_invalid_enum_value(self) -> None:
         stdout = io.StringIO()
@@ -109,7 +184,34 @@ class OrchestratorParseTests(unittest.TestCase):
         ), redirect_stdout(stdout):
             code = parse_output_action([str(self.output_file), "review"])
         self.assertEqual(code, 1)
-        self.assertEqual(json.loads(stdout.getvalue())["reason"], "sub-agent returned invalid json")
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["reason"], "sub-agent returned invalid json")
+        self.assertEqual(payload["structuredIssues"][0]["field"], "status")
+        self.assertEqual(payload["structuredIssues"][0]["type"], "invalid_enum")
+
+    def test_create_output_rejects_empty_path_with_field_diagnostic(self) -> None:
+        stdout = io.StringIO()
+        with patch.dict("os.environ", {"PROJECT_ROOT": str(self.project_root)}), patch(
+            "story_automator.commands.orchestrator_parse.run_cmd",
+            return_value=CommandResult('{"status":"SUCCESS","story_created":true,"story_file":"","summary":"ok","next_action":"proceed"}', 0),
+        ), redirect_stdout(stdout):
+            code = parse_output_action([str(self.output_file), "create"])
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["reason"], "sub-agent returned invalid json")
+        self.assertEqual(payload["structuredIssues"][0]["field"], "story_file")
+        self.assertEqual(payload["structuredIssues"][0]["type"], "invalid_value")
+
+    def test_parse_success_output_remains_exact_child_payload(self) -> None:
+        child = '{"status":"SUCCESS","summary":"ok","next_action":"proceed"}'
+        stdout = io.StringIO()
+        with patch.dict("os.environ", {"PROJECT_ROOT": str(self.project_root)}), patch(
+            "story_automator.commands.orchestrator_parse.run_cmd",
+            return_value=CommandResult(child, 0),
+        ), redirect_stdout(stdout):
+            code = parse_output_action([str(self.output_file), "retro"])
+        self.assertEqual(code, 0)
+        self.assertEqual(stdout.getvalue().strip(), child)
 
     def test_state_file_keeps_pinned_parse_contract_after_override_changes(self) -> None:
         state_file = self._build_state()
@@ -128,6 +230,17 @@ class OrchestratorParseTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertTrue(json.loads(stdout.getvalue())["story_created"])
 
+    def test_parse_contract_rejects_non_object_parse_section(self) -> None:
+        from story_automator.core.parse_contracts import ParseContractError, load_parse_contract
+
+        for value in ("bad", "", [], 0, False, None):
+            with self.subTest(value=value):
+                with self.assertRaises(ParseContractError) as ctx:
+                    load_parse_contract({"parse": value})
+
+                self.assertEqual(ctx.exception.issues[0].field, "parse")
+                self.assertEqual(ctx.exception.issues[0].type, "invalid_type")
+
     def test_parser_runtime_uses_policy_settings(self) -> None:
         override_dir = self.project_root / "_bmad" / "bmm"
         override_dir.mkdir(parents=True, exist_ok=True)
@@ -144,6 +257,19 @@ class OrchestratorParseTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(mock_run.call_args.args[:4], ("claude", "-p", "--model", "sonnet"))
         self.assertEqual(mock_run.call_args.kwargs["timeout"], 33)
+
+    def test_parse_output_wraps_non_exception_command_errors(self) -> None:
+        stdout = io.StringIO()
+        with patch.dict("os.environ", {"PROJECT_ROOT": str(self.project_root)}), patch(
+            "story_automator.commands.orchestrator_parse.run_cmd",
+            return_value=CommandResult("", 1, error="raw error text"),  # type: ignore[arg-type]
+        ), redirect_stdout(stdout):
+            code = parse_output_action([str(self.output_file), "create"])
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(code, 1)
+        self.assertEqual(payload["structuredIssues"][0]["type"], "RuntimeError")
+        self.assertEqual(payload["structuredIssues"][0]["message"], "raw error text")
 
     def _install_bundle(self) -> None:
         source_skill = REPO_ROOT / "skills" / "bmad-story-automator"

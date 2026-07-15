@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import sys
+from pathlib import Path
 from typing import Callable
 
 from .commands.agent_config_cmd import cmd_agent_config
@@ -17,6 +19,7 @@ from .commands.state import cmd_build_state_doc, cmd_sprint_compare, cmd_state_m
 from .commands.tmux import cmd_codex_status_check, cmd_heartbeat_check, cmd_monitor_session, cmd_tmux_status_check, cmd_tmux_wrapper
 from .commands.validate_story_creation import cmd_validate_story_creation
 from .core.common import help_flag, print_json
+from .core.diagnostics import redact_actual
 from .core.epic_parser import epic_complete, parse_epic_file, parse_story, parse_story_range
 
 
@@ -119,11 +122,20 @@ def _cmd_parse_story(args: list[str]) -> int:
     if not rules:
         print_json({"ok": False, "error": "rules_file_not_found"})
         return 1
+    if not Path(epic).is_file():
+        print_json({"ok": False, "error": "missing_epic_or_story"})
+        return 1
+    if not Path(rules).is_file():
+        print_json({"ok": False, "error": "rules_file_not_found"})
+        return 1
     try:
         print_json(parse_story(epic, story, rules))
         return 0
-    except FileNotFoundError:
-        print_json({"ok": False, "error": "missing_epic_or_story" if epic else "rules_file_not_found"})
+    except OSError as exc:
+        print_json({"ok": False, "error": "file_read_failed", "reason": str(redact_actual(str(exc)))})
+        return 1
+    except json.JSONDecodeError:
+        print_json({"ok": False, "error": "invalid_rules_json"})
         return 1
     except ValueError as exc:
         print_json({"ok": False, "error": str(exc)})
@@ -132,9 +144,9 @@ def _cmd_parse_story(args: list[str]) -> int:
 
 def _cmd_parse_story_range(args: list[str]) -> int:
     user_input = _arg_value(args, "--input")
-    total = int(_arg_value(args, "--total") or 0)
     ids = _arg_value(args, "--ids") or ""
     try:
+        total = int(_arg_value(args, "--total") or 0)
         print_json(parse_story_range(user_input, total, ids))
         return 0
     except ValueError:

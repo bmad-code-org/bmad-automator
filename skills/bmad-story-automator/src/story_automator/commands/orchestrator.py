@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 from pathlib import Path
 
@@ -13,6 +12,8 @@ from story_automator.core.frontmatter import (
     parse_frontmatter,
     parse_simple_frontmatter,
 )
+from story_automator.core.orchestration_events import emit_policy_decision, emit_policy_load_failed
+from story_automator.core.parse_contracts import verifier_exception_payload
 from story_automator.core.runtime_policy import (
     PolicyError,
     crash_max_retries,
@@ -25,18 +26,7 @@ from story_automator.core.runtime_layout import active_marker_path, active_marke
 from story_automator.core.success_verifiers import resolve_success_contract, run_success_verifier
 from story_automator.core.sprint import sprint_status_epic, sprint_status_get
 from story_automator.core.story_keys import normalize_story_key, sprint_status_file
-from story_automator.core.utils import (
-    atomic_write,
-    ensure_dir,
-    extract_json_line,
-    file_exists,
-    get_project_root,
-    iso_now,
-    print_json,
-    read_text,
-    run_cmd,
-    trim_lines,
-)
+from story_automator.core.utils import atomic_write, ensure_dir, file_exists, get_project_root, iso_now, print_json, read_text, run_cmd
 from .orchestrator_epic_agents import (
     agents_build_action,
     agents_resolve_action,
@@ -46,6 +36,7 @@ from .orchestrator_epic_agents import (
     retro_agent_action,
 )
 from .orchestrator_parse import parse_output_action
+from .orchestrator_state import state_update_action
 
 
 def cmd_orchestrator_helper(args: list[str]) -> int:
@@ -62,7 +53,7 @@ def cmd_orchestrator_helper(args: list[str]) -> int:
         "state-latest": _state_latest,
         "state-latest-incomplete": _state_latest_incomplete,
         "state-summary": _state_summary,
-        "state-update": _state_update,
+        "state-update": state_update_action,
         "escalate": _escalate,
         "commit-ready": _commit_ready,
         "normalize-key": _normalize_key,
@@ -297,31 +288,6 @@ def _state_summary(args: list[str]) -> int:
     return 0
 
 
-def _state_update(args: list[str]) -> int:
-    if not args or not file_exists(args[0]):
-        print_json({"ok": False, "error": "file_not_found"})
-        return 1
-    text = read_text(args[0])
-    updated: list[str] = []
-    idx = 1
-    while idx < len(args):
-        if args[idx] == "--set" and idx + 1 < len(args):
-            key, value = args[idx + 1].split("=", 1)
-            replaced, count = re.subn(rf"(?m)^{re.escape(key)}:.*$", lambda m, k=key, v=value: f"{k}: {v}", text)
-            if count:
-                text = replaced
-                updated.append(key)
-            idx += 2
-            continue
-        idx += 1
-    if not updated:
-        print_json({"ok": False, "error": "keys_not_found", "updated": []})
-        return 1
-    Path(args[0]).write_text(text, encoding="utf-8")
-    print_json({"ok": True, "updated": updated})
-    return 0
-
-
 def _escalate(args: list[str]) -> int:
     trigger = args[0] if args else ""
     context = args[1] if len(args) > 1 else ""
@@ -340,11 +306,13 @@ def _escalate(args: list[str]) -> int:
     try:
         policy = load_runtime_policy(get_project_root(), state_file=state_file)
     except (FileNotFoundError, PolicyError) as exc:
+        emit_policy_load_failed(trigger, state_file, str(exc))
         print_json({"escalate": True, "reason": str(exc)})
         return 0
     if trigger == "review-loop":
         cycles = _parse_context_int(context, "cycles")
         limit = review_max_cycles(policy)
+        emit_policy_decision(trigger, cycles >= limit, {"cycles": cycles, "limit": limit})
         if cycles >= limit:
             print_json({"escalate": True, "reason": f"Review loop exceeded max cycles ({cycles}/{limit})"})
         else:
@@ -353,6 +321,7 @@ def _escalate(args: list[str]) -> int:
     if trigger == "session-crash":
         retries = _parse_context_int(context, "retries")
         limit = crash_max_retries(policy)
+        emit_policy_decision(trigger, retries >= limit, {"retries": retries, "limit": limit})
         if retries >= limit:
             print_json({"escalate": True, "reason": f"Session crashed after {retries} retries"})
         else:
@@ -360,11 +329,13 @@ def _escalate(args: list[str]) -> int:
         return 0
     if trigger == "story-validation":
         created = _parse_context_int(context, "created")
+        emit_policy_decision(trigger, created != 1, {"created": created})
         if created != 1:
             print_json({"escalate": True, "reason": "No story file created" if created == 0 else f"Runaway creation: {created} files"})
         else:
             print_json({"escalate": False})
         return 0
+    emit_policy_decision(trigger, False, {"reason": "Unknown trigger"})
     print_json({"escalate": False, "reason": "Unknown trigger"})
     return 0
 
@@ -451,7 +422,7 @@ def _verify_code_review(args: list[str]) -> int:
                 continue
             idx += 1
     except PolicyError as exc:
-        print_json({"verified": False, "reason": "review_contract_invalid", "input": args[0], "error": str(exc)})
+        print_json(verifier_exception_payload("review_contract_invalid", exc, source="verify-code-review", field="--state-file", input=args[0]))
         return 1
     payload = verify_code_review_completion(get_project_root(), args[0], state_file=state_file or None)
     print_json(payload)
@@ -493,16 +464,16 @@ def _verify_step(args: list[str]) -> int:
         )
         exit_code = 0
     except (FileNotFoundError, OSError, PolicyError, ValueError) as exc:
-        payload = {"verified": False, "step": step, "input": story_key, "reason": "verifier_contract_invalid", "error": str(exc)}
+        message = str(exc)
+        field = "--state-file" if message.startswith("--state-file requires") else "--output-file" if message.startswith("--output-file requires") else ""
+        payload = verifier_exception_payload("verifier_contract_invalid", exc, source="verify-step", field=field, step=step, input=story_key)
         exit_code = 1
     print_json(payload)
     return exit_code
 
-
 def _parse_context_int(context: str, key: str) -> int:
     match = re.search(rf"{re.escape(key)}=(\d+)", context)
     return int(match.group(1)) if match else 0
-
 
 def _flag_value(args: list[str], idx: int, flag: str) -> str:
     if idx + 1 >= len(args) or not args[idx + 1].strip() or args[idx + 1].startswith("--"):

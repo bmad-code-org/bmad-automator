@@ -5,15 +5,16 @@ import shlex
 import time
 from pathlib import Path
 
+from story_automator.core.monitoring import emit_monitor_result
 from story_automator.core.prompt_rendering import render_step_prompt
 from story_automator.core.runtime_layout import runtime_provider
 from story_automator.core.runtime_policy import PolicyError, load_runtime_policy, step_contract
-from story_automator.core.success_verifiers import resolve_success_contract, run_success_verifier
 from story_automator.core.tmux_runtime import (
     agent_cli,
     agent_type,
     generate_session_name,
     heartbeat_check,
+    monitor_session_state_issue,
     runtime_mode,
     session_status,
     skill_prefix,
@@ -28,6 +29,9 @@ from story_automator.core.utils import (
     project_hash,
     project_slug,
 )
+from story_automator.commands.tmux_monitor import parse_monitor_int_option as _parse_positive_int_option
+from story_automator.commands.tmux_monitor import parse_monitor_value_option as _parse_monitor_value_option
+from story_automator.commands.tmux_monitor import verify_monitor_completion as _verify_monitor_completion
 
 
 def cmd_tmux_wrapper(args: list[str]) -> int:
@@ -39,9 +43,13 @@ def cmd_tmux_wrapper(args: list[str]) -> int:
     if action == "spawn":
         return _spawn(args[1:])
     if action == "name":
-        if len(args) < 4:
+        if len(args) < 4 or any(value.startswith("--") for value in args[1:4]):
             return _usage(1)
-        cycle = args[4] if len(args) > 4 else ""
+        try:
+            cycle = _cycle_arg(args)
+        except PolicyError as exc:
+            print(str(exc), file=__import__("sys").stderr)
+            return 1
         print(generate_session_name(args[1], args[2], args[3], cycle))
         return 0
     if action == "list":
@@ -114,7 +122,7 @@ def _usage(code: int) -> int:
     print("  name <step> <epic> <story_id> [--cycle N]", file=target)
     print("  list [--project-only]", file=target)
     print("  kill <session_name>", file=target)
-    print("  kill-all [--project-only]", file=target)
+    print("  kill-all [--project-only|--all-projects]", file=target)
     print("  exists <session_name>", file=target)
     print("  build-cmd <step> <story_id> [--agent TYPE] [--model ID] [--state-file PATH] [extra_instruction]", file=target)
     print("  project-slug", file=target)
@@ -291,7 +299,7 @@ def cmd_monitor_session(args: list[str]) -> int:
     max_polls = 30
     initial_wait = 5
     timeout_minutes = 60
-    json_output = False
+    json_output = "--json" in args[1:]
     workflow = "dev"
     story_key = ""
     state_file = ""
@@ -300,42 +308,62 @@ def cmd_monitor_session(args: list[str]) -> int:
     idx = 1
     while idx < len(args):
         arg = args[idx]
-        if arg == "--max-polls" and idx + 1 < len(args):
-            max_polls = int(args[idx + 1])
+        if arg == "--max-polls":
+            parsed = _parse_positive_int_option("--max-polls", args[idx + 1] if idx + 1 < len(args) else "", json_output)
+            if parsed is None:
+                return 1
+            max_polls = parsed
             idx += 2
             continue
-        if arg == "--initial-wait" and idx + 1 < len(args):
-            initial_wait = int(args[idx + 1])
+        if arg == "--initial-wait":
+            parsed = _parse_positive_int_option("--initial-wait", args[idx + 1] if idx + 1 < len(args) else "", json_output, minimum=0)
+            if parsed is None:
+                return 1
+            initial_wait = parsed
             idx += 2
             continue
-        if arg == "--timeout" and idx + 1 < len(args):
-            timeout_minutes = int(args[idx + 1])
+        if arg == "--timeout":
+            parsed = _parse_positive_int_option("--timeout", args[idx + 1] if idx + 1 < len(args) else "", json_output)
+            if parsed is None:
+                return 1
+            timeout_minutes = parsed
             idx += 2
             continue
         if arg == "--json":
             json_output = True
-        elif arg == "--agent" and idx + 1 < len(args):
-            agent = args[idx + 1]
+        elif arg == "--agent":
+            parsed = _parse_monitor_value_option("--agent", args, idx, json_output)
+            if parsed is None:
+                return 1
+            agent = parsed
             idx += 2
             continue
-        elif arg == "--workflow" and idx + 1 < len(args):
-            workflow = args[idx + 1]
+        elif arg == "--workflow":
+            parsed = _parse_monitor_value_option("--workflow", args, idx, json_output)
+            if parsed is None:
+                return 1
+            workflow = parsed
             idx += 2
             continue
-        elif arg == "--story-key" and idx + 1 < len(args):
-            story_key = args[idx + 1]
+        elif arg == "--story-key":
+            parsed = _parse_monitor_value_option("--story-key", args, idx, json_output)
+            if parsed is None:
+                return 1
+            story_key = parsed
             idx += 2
             continue
         elif arg == "--state-file":
-            try:
-                state_file = _flag_value(args, idx, "--state-file")
-            except PolicyError as exc:
-                print(str(exc), file=__import__("sys").stderr)
+            parsed = _parse_monitor_value_option("--state-file", args, idx, json_output)
+            if parsed is None:
                 return 1
+            state_file = parsed
             idx += 2
             continue
-        elif arg == "--project-root" and idx + 1 < len(args):
-            project_root = args[idx + 1]
+        elif arg == "--project-root":
+            parsed = _parse_monitor_value_option("--project-root", args, idx, json_output)
+            if parsed is None:
+                return 1
+            project_root = parsed
             idx += 2
             continue
         idx += 1
@@ -348,7 +376,7 @@ def cmd_monitor_session(args: list[str]) -> int:
     last_total = 0
     for _ in range(1, max_polls + 1):
         if time.time() - start >= timeout_minutes * 60:
-            return _emit_monitor(json_output, "timeout", last_done, last_total, "", f"exceeded_{timeout_minutes}m")
+            return emit_monitor_result(json_output, "timeout", last_done, last_total, "", f"exceeded_{timeout_minutes}m")
         status = session_status(session, full=False, codex=agent == "codex", project_root=project_root, mode=runtime_mode())
         if int(status["todos_done"]) or int(status["todos_total"]):
             last_done = int(status["todos_done"])
@@ -367,7 +395,7 @@ def cmd_monitor_session(args: list[str]) -> int:
                 verified, verifier_name = verification
                 if bool(verified.get("verified")):
                     reason = "normal_completion" if verifier_name == "session_exit" else "verified_complete"
-                    return _emit_monitor(
+                    return emit_monitor_result(
                         json_output,
                         "completed",
                         last_done,
@@ -376,7 +404,7 @@ def cmd_monitor_session(args: list[str]) -> int:
                         reason,
                         output_verified=bool(verified.get("verified")),
                     )
-                return _emit_monitor(
+                return emit_monitor_result(
                     json_output,
                     "incomplete",
                     last_done,
@@ -385,10 +413,10 @@ def cmd_monitor_session(args: list[str]) -> int:
                     str(verified.get("reason") or "workflow_not_verified"),
                     output_verified=bool(verified.get("verified")),
                 )
-            return _emit_monitor(json_output, "completed", last_done, last_total, str(output), "normal_completion")
+            return emit_monitor_result(json_output, "completed", last_done, last_total, str(output), "normal_completion")
         if state == "crashed":
             crashed = session_status(session, full=True, codex=agent == "codex", project_root=project_root, mode=runtime_mode())
-            return _emit_monitor(
+            return emit_monitor_result(
                 json_output,
                 "crashed",
                 last_done,
@@ -398,74 +426,36 @@ def cmd_monitor_session(args: list[str]) -> int:
             )
         if state == "stuck":
             output = session_status(session, full=True, codex=agent == "codex", project_root=project_root, mode=runtime_mode())["active_task"]
-            return _emit_monitor(json_output, "stuck", 0, 0, str(output), "never_active")
+            return emit_monitor_result(json_output, "stuck", last_done, last_total, str(output), "never_active")
         if state == "not_found":
-            return _emit_monitor(json_output, "not_found", last_done, last_total, "", "session_gone")
+            issue = status.get("session_state_issue") if json_output else None
+            if issue is None and json_output:
+                issue = monitor_session_state_issue(session, project_root)
+            return emit_monitor_result(json_output, "not_found", last_done, last_total, "", "session_gone", structured_issue=issue)
         time.sleep(min(180 if agent == "codex" else 120, max(5, int(status["wait_estimate"]))))
     output = session_status(session, full=True, codex=agent == "codex", project_root=project_root, mode=runtime_mode())["active_task"]
-    return _emit_monitor(json_output, "timeout", last_done, last_total, str(output), "max_polls_exceeded")
-
-
-def _emit_monitor(
-    json_output: bool,
-    state: str,
-    done: int,
-    total: int,
-    output_file: str,
-    reason: str,
-    *,
-    output_verified: bool | None = None,
-) -> int:
-    if json_output:
-        print_json(
-            {
-                "final_state": state,
-                "todos_done": done,
-                "todos_total": total,
-                "output_file": output_file,
-                "exit_reason": reason,
-                "output_verified": False if output_verified is None else output_verified,
-            }
-        )
-    else:
-        print(f"{state},{done},{total},{output_file},{reason}")
-    return 0
-
-
-def _verify_monitor_completion(
-    workflow: str,
-    *,
-    project_root: str,
-    story_key: str,
-    output_file: str,
-    state_file: str | Path | None = None,
-) -> tuple[dict[str, object], str] | None:
-    try:
-        contract = resolve_success_contract(project_root, workflow, state_file=state_file)
-    except (FileNotFoundError, OSError, PolicyError, ValueError):
-        return ({"verified": False, "reason": "verifier_contract_invalid"}, "")
-    verifier_name = str(contract.get("verifier") or "").strip()
-    if not verifier_name:
-        return ({"verified": False, "reason": "verifier_contract_invalid"}, "")
-    if verifier_name in {"create_story_artifact", "review_completion", "epic_complete"} and not story_key.strip():
-        return ({"verified": False, "reason": "story_key_required", "verifier": verifier_name}, verifier_name)
-    try:
-        result = run_success_verifier(
-            verifier_name,
-            project_root=project_root,
-            story_key=story_key,
-            output_file=output_file,
-            contract=contract,
-        )
-    except (FileNotFoundError, IsADirectoryError, NotADirectoryError, OSError, PolicyError, ValueError):
-        return ({"verified": False, "reason": "verifier_contract_invalid"}, verifier_name)
-    return (result, verifier_name)
+    return emit_monitor_result(json_output, "timeout", last_done, last_total, str(output), "max_polls_exceeded")
 
 
 def _flag_value(args: list[str], idx: int, flag: str) -> str:
     if idx + 1 >= len(args) or not args[idx + 1].strip() or args[idx + 1].startswith("--"):
         raise PolicyError(f"{flag} requires a value")
     return args[idx + 1]
+
+def _optional_flag_value(args: list[str], flag: str, *, start: int = 0) -> str:
+    for idx in range(start, len(args)):
+        if args[idx] == flag:
+            return _flag_value(args, idx, flag)
+    return ""
+
+
+def _cycle_arg(args: list[str]) -> str:
+    cycle = _optional_flag_value(args, "--cycle", start=4)
+    if cycle:
+        return cycle
+    if len(args) > 4 and args[4].startswith("--"):
+        raise PolicyError(f"unknown option for name: {args[4]}")
+    return args[4] if len(args) > 4 else ""
 
 
 def _raw_agent_selection() -> str:
@@ -479,9 +469,9 @@ def _raw_agent_selection() -> str:
 
 def _resolve_agent_selection(agent: str, project_root: str) -> str:
     value = str(agent or "").strip().lower()
-    if value in {"", "auto", "runtime"}:
-        return runtime_provider(project_root)
-    return value
+    return runtime_provider(project_root) if value in {"", "auto", "runtime"} else value
+
+
 def _infer_agent_from_command(command: str) -> str:
     value = command.strip()
     if not value:
