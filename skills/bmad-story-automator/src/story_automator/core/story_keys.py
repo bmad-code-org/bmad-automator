@@ -80,6 +80,11 @@ def normalize_story_key_for_epic(project_root: str, epic: str, value: str) -> St
     return normalize_story_key(project_root, value)
 
 
+def resolve_bare_story_for_epic(project_root: str, value: str, epic: str) -> StoryKey | None:
+    num = re.split(r"[.\-]", value)[-1]
+    return normalize_story_key_for_epic(project_root, epic, f"{epic}-{num}")
+
+
 def _complete_story_key(project_root: str, story_id: str, prefix: str, key: str) -> StoryKey:
     artifacts = implementation_artifacts_dir(project_root)
     if not key:

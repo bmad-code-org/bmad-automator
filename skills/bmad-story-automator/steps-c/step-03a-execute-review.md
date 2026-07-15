@@ -35,9 +35,9 @@ Set: `scripts="{scriptsDir}"`
 # --command required (see Spawn Pattern in step-03)
 resolve_agent_for_task "auto" "$state_file" "{story_id}"
 if should_apply_primary_model "$current_agent"; then
-  built_cmd=$("$scripts" tmux-wrapper build-cmd auto {story_id} --agent "$current_agent" --model "$primary_model" --state-file "$state_file")
+  built_cmd=$("$scripts" tmux-wrapper build-cmd auto {story_id} --epic {epic} --agent "$current_agent" --model "$primary_model" --state-file "$state_file")
 else
-  built_cmd=$("$scripts" tmux-wrapper build-cmd auto {story_id} --agent "$current_agent" --state-file "$state_file")
+  built_cmd=$("$scripts" tmux-wrapper build-cmd auto {story_id} --epic {epic} --agent "$current_agent" --state-file "$state_file")
 fi
 session=$("$scripts" tmux-wrapper spawn auto {epic} {story_id} \
   --agent "$current_agent" \

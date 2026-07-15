@@ -8,6 +8,7 @@ from pathlib import Path
 from story_automator.core.prompt_rendering import render_step_prompt
 from story_automator.core.runtime_layout import runtime_provider
 from story_automator.core.runtime_policy import PolicyError, load_runtime_policy, step_contract
+from story_automator.core.story_keys import resolve_bare_story_for_epic
 from story_automator.core.success_verifiers import resolve_success_contract, run_success_verifier
 from story_automator.core.tmux_runtime import (
     agent_cli,
@@ -169,6 +170,7 @@ def _build_cmd(args: list[str]) -> int:
     idx = 0
     state_file = ""
     model = ""
+    epic = ""
     try:
         while idx < len(tail):
             if tail[idx] == "--agent":
@@ -183,6 +185,10 @@ def _build_cmd(args: list[str]) -> int:
                 state_file = _flag_value(tail, idx, "--state-file")
                 idx += 2
                 continue
+            if tail[idx] == "--epic":
+                epic = _flag_value(tail, idx, "--epic")
+                idx += 2
+                continue
             extra = f"{extra} {tail[idx]}".strip()
             idx += 1
     except PolicyError as exc:
@@ -192,10 +198,16 @@ def _build_cmd(args: list[str]) -> int:
     story_prefix = story_id.replace(".", "-")
     root = get_project_root()
     agent = _resolve_agent_selection(agent, root)
+    story_key = story_prefix
+    if epic:
+        sk = resolve_bare_story_for_epic(root, story_id, epic)
+        if sk is not None:
+            story_prefix = sk.prefix
+            story_key = sk.key or sk.prefix
     try:
         policy = load_runtime_policy(root, state_file=state_file)
         contract = step_contract(policy, step)
-        prompt = _render_step_prompt(contract, story_id, story_prefix, extra)
+        prompt = _render_step_prompt(contract, story_id, story_prefix, extra, story_key=story_key)
     except (OSError, PolicyError) as exc:
         print(str(exc), file=__import__("sys").stderr)
         return 1
@@ -223,7 +235,7 @@ def _build_cmd(args: list[str]) -> int:
     return 0
 
 
-def _render_step_prompt(contract: dict[str, object], story_id: str, story_prefix: str, extra_instruction: str) -> str:
+def _render_step_prompt(contract: dict[str, object], story_id: str, story_prefix: str, extra_instruction: str, story_key: str = "") -> str:
     try:
         return render_step_prompt(
             contract,
@@ -231,6 +243,7 @@ def _render_step_prompt(contract: dict[str, object], story_id: str, story_prefix
             story_id=story_id,
             story_prefix=story_prefix,
             extra_instruction=extra_instruction,
+            story_key=story_key,
         )
     except (OSError, ValueError) as exc:
         raise PolicyError(str(exc)) from exc

@@ -5,6 +5,7 @@ import textwrap
 import unittest
 from pathlib import Path
 
+from story_automator.commands.orchestrator import _resolve_with_epic
 from story_automator.core.sprint import sprint_status_epic, sprint_status_get
 from story_automator.core.story_keys import normalize_story_key, normalize_story_key_for_epic
 
@@ -659,6 +660,28 @@ class NormalizeStoryKeyTests(unittest.TestCase):
         self.assertIsNone(normalize_story_key(str(self.project_root), "1"))
         # Leading digit is not a valid non-numeric epic prefix.
         self.assertIsNone(normalize_story_key(str(self.project_root), "9multi.1"))
+
+    # --- Epic-qualified resolution (_resolve_with_epic) ---
+
+    def test_resolve_with_epic_disambiguates_bare_number_across_epics(self) -> None:
+        self._write_sprint_status(
+            """
+            alpha-1-build-foo: ready-for-dev
+            beta-1-build-bar: ready-for-dev
+            """
+        )
+        alpha = _resolve_with_epic(str(self.project_root), "1", "alpha")
+        assert alpha is not None
+        self.assertEqual(alpha.key, "alpha-1-build-foo")
+        beta = _resolve_with_epic(str(self.project_root), "1", "beta")
+        assert beta is not None
+        self.assertEqual(beta.key, "beta-1-build-bar")
+
+    def test_resolve_with_epic_without_epic_uses_plain_resolver(self) -> None:
+        self._write_sprint_status("alpha-1-build-foo: ready-for-dev\n")
+        result = _resolve_with_epic(str(self.project_root), "alpha-1-build-foo", "")
+        assert result is not None
+        self.assertEqual(result.key, "alpha-1-build-foo")
 
     def _write_sprint_status(self, content: str) -> None:
         path = self.project_root / "_bmad-output" / "implementation-artifacts" / "sprint-status.yaml"
