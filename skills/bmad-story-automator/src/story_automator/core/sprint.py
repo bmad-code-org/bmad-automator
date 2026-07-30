@@ -16,11 +16,7 @@ class SprintStatus:
     reason: str = ""
 
 
-def sprint_status_get(project_root: str, story_key: str) -> SprintStatus:
-    status_file = sprint_status_file(project_root)
-    if not file_exists(status_file):
-        return SprintStatus(False, story_key, "unknown", False, "sprint-status.yaml not found")
-    content = read_text(status_file)
+def _status_from_content(project_root: str, content: str, story_key: str) -> SprintStatus:
     norm = normalize_story_key(project_root, story_key)
     if norm is not None:
         result = _best_status_match(project_root, content, story_key, norm)
@@ -31,6 +27,19 @@ def sprint_status_get(project_root: str, story_key: str) -> SprintStatus:
         status = match.group(1).strip()
         return SprintStatus(True, story_key, status, status == "done")
     return SprintStatus(False, story_key, "not_found", False)
+
+
+def sprint_status_get(project_root: str, story_key: str) -> SprintStatus:
+    status_file = sprint_status_file(project_root)
+    if not file_exists(status_file):
+        return SprintStatus(False, story_key, "unknown", False, "sprint-status.yaml not found")
+    return _status_from_content(project_root, read_text(status_file), story_key)
+
+
+def sprint_status_done_in_text(content: str, story_id: str, project_root: str = "") -> bool:
+    # Text-based variant of sprint_status_get for callers that already hold the
+    # sprint-status content and an explicit path (e.g. sprint-compare).
+    return _status_from_content(project_root, content, story_id).done
 
 
 def sprint_status_epic(project_root: str, epic: str) -> tuple[list[str], int]:
